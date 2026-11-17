@@ -28,6 +28,9 @@ public class WebServer {
         String deviceName();
         /** Android 10+: save into Download/ through MediaStore (works without storage permission). Returns path or null. */
         String mediaStoreSave(String name, byte[] data);
+        /** Opens the system file picker; the chosen file is copied to cacheFile(id). */
+        boolean pickFile(String id, File target);
+        String pickStatus(String id);
     }
 
     public static final String VERSION = "1.0.0";
@@ -189,6 +192,17 @@ public class WebServer {
                 json(out, "{\"ok\":true,\"size\":" + src.length() + "}");
                 return;
             }
+            case "/api/ls":
+                json(out, listDir(q.get("path")));
+                return;
+            case "/api/pick": {
+                File f = cacheFile(q.get("id"));
+                json(out, "{\"ok\":" + (f != null && host.pickFile(q.get("id"), f)) + "}");
+                return;
+            }
+            case "/api/pickstatus":
+                json(out, "{\"state\":" + js(host.pickStatus(q.get("id"))) + "}");
+                return;
             case "/api/probe":
                 json(out, probe(q.get("url")));
                 return;
@@ -356,6 +370,59 @@ public class WebServer {
             return "{\"ok\":false,\"code\":0,\"error\":" + js(String.valueOf(e.getMessage())) + ",\"ms\":"
                     + (System.currentTimeMillis() - t0) + "}";
         }
+    }
+
+    private String listDir(String path) {
+        StringBuilder b = new StringBuilder();
+        if (path == null || path.isEmpty()) {
+            b.append("{\"path\":\"\",\"parent\":null,\"items\":[");
+            Set<String> seen = new LinkedHashSet<>();
+            for (File[] g : host.exportTargets()) {
+                if (g.length == 0) continue;
+                File r = g[0];
+                String p = r.getAbsolutePath();
+                if (p.endsWith("/Download") || p.endsWith("/M3U")) continue;
+                seen.add(p);
+            }
+            File[] st = new File("/storage").listFiles();
+            if (st != null) for (File f : st) {
+                String n = f.getName();
+                if (f.isDirectory() && !n.equals("self") && !n.equals("emulated")) seen.add(f.getAbsolutePath());
+            }
+            boolean first = true;
+            for (String p : seen) {
+                File f = new File(p);
+                if (!first) b.append(',');
+                first = false;
+                boolean internal = p.contains("emulated");
+                b.append("{\"name\":").append(js(internal ? "الذاكرة الداخلية" : "USB / " + f.getName()))
+                 .append(",\"path\":").append(js(p)).append(",\"dir\":true,\"root\":true,\"readable\":").append(f.canRead() && f.listFiles() != null).append('}');
+            }
+            return b.append("]}").toString();
+        }
+        File d = new File(path);
+        File[] fs = d.listFiles();
+        if (fs == null) return "{\"path\":" + js(path) + ",\"error\":\"denied\",\"items\":[]}";
+        Arrays.sort(fs, (x, y) -> x.isDirectory() != y.isDirectory() ? (x.isDirectory() ? -1 : 1) : x.getName().compareToIgnoreCase(y.getName()));
+        File par = d.getParentFile();
+        b.append("{\"path\":").append(js(d.getAbsolutePath())).append(",\"parent\":")
+         .append(par == null || d.getAbsolutePath().matches("/storage/[^/]+|/storage/emulated/0") ? "\"\"" : js(par.getAbsolutePath()))
+         .append(",\"items\":[");
+        boolean first = true;
+        int n = 0;
+        for (File f : fs) {
+            String nm = f.getName();
+            if (nm.startsWith(".")) continue;
+            String l = nm.toLowerCase(Locale.ROOT);
+            boolean dir = f.isDirectory();
+            if (!dir && !(l.endsWith(".m3u") || l.endsWith(".m3u8") || l.endsWith(".txt"))) continue;
+            if (++n > 500) break;
+            if (!first) b.append(',');
+            first = false;
+            b.append("{\"name\":").append(js(nm)).append(",\"path\":").append(js(f.getAbsolutePath()))
+             .append(",\"dir\":").append(dir).append(",\"size\":").append(dir ? 0 : f.length()).append('}');
+        }
+        return b.append("]}").toString();
     }
 
     private String listPlaylists() {

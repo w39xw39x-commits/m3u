@@ -456,7 +456,7 @@
       if (ui.move) moveBy(d * 10); else { const pg = $('[data-act="page"][data-arg="' + (ui.page + d) + '"]'); if (pg) pg.click(); }
     } else if (k === 'menu') { const n = $('.nav.cur') || $('.nav'); n && n.focus(); }
   };
-  window.onAppResume = function () { refreshInfo(); };
+  window.onAppResume = function () { refreshInfo().then(() => { if (ui.afterPerm && INFO.storage) { ui.afterPerm = false; ACT.browse(''); } }); };
 
   /* spatial navigation for the remote */
   function focusables() {
@@ -628,7 +628,9 @@
       <label class="fl">نوع البث</label><div class="seg">${['ts', 'm3u8'].map(o => `<button class="btn sm f ${(e.output || 'ts') === o ? 'on' : ''}" data-act="xtOut" data-arg="${o}" data-fid="xo-${o}">${o.toUpperCase()}</button>`).join('')}</div>`;
     else form = `
       <div class="filebox">
-        <button class="btn f auto" data-act="pickDevice" data-fid="pick-dev">📂 اختيار من ذاكرة الرسيفر / USB</button>
+        <button class="btn pri f auto" data-act="browse" data-arg="" data-fid="pick-browse">📂 تصفح ملفات الرسيفر و USB</button>
+        <button class="btn f" data-act="sysPick" data-fid="pick-sys">🗂 فتح مدير الملفات</button>
+        <button class="btn f" data-act="pickDevice" data-fid="pick-dev">🔍 بحث تلقائي عن ملفات M3U</button>
         ${IS_TV ? '' : `<label class="btn f" tabindex="0" data-fid="pick-pc">💻 رفع من الكمبيوتر<input type="file" id="f-file" accept=".m3u,.m3u8,.txt" hidden></label>`}
       </div><div class="hint">يبحث التطبيق عن ملفات .m3u في الذاكرة الداخلية وفلاش USB.</div>`;
     const list = S.sources.map((s, i) => {
@@ -963,6 +965,45 @@
         modal(`<h2>اختر ملف القنوات</h2><div class="list">${files.map((f, i) => `<button class="rowmain filerow f ${i === 0 ? 'auto' : ''}" data-act="importFile" data-arg="${i}"><span class="gic">📄</span><span class="nm"><b class="ltr">${esc(f.name)}</b><small class="ltr">${esc(f.path)} · ${fmtMB(f.size)}</small></span></button>`).join('')}</div>
           <div class="bar end"><button class="btn f" data-act="closeModal">إلغاء</button></div>`);
       } catch (e) { closeModal(); toast('تعذر قراءة الذاكرة', 'bad'); }
+    },
+    browse: async path => {
+      let j;
+      try { j = await (await fetch('/api/ls?path=' + enc(path || ''))).json(); } catch (e) { return toast('تعذر قراءة الذاكرة', 'bad'); }
+      ui.lsItems = j.items || [];
+      if (j.error === 'denied' || (!path && !INFO.storage)) {
+        if (j.error === 'denied' || !ui.lsItems.some(x => x.readable)) {
+          return modal(`<h2>🔐 يلزم إذن الوصول للملفات</h2><p class="mut">لعرض ملفات الرسيفر وفلاش USB، امنح التطبيق صلاحية «الوصول إلى كل الملفات» ثم ارجع للتطبيق.</p>
+            <div class="bar end"><button class="btn f" data-act="sysPick">🗂 فتح مدير الملفات بدلاً من ذلك</button><button class="btn pri f auto" data-act="permThenBrowse">منح الصلاحية</button></div>`);
+        }
+      }
+      const rows = ui.lsItems.map((x, i) => `<button class="rowmain filerow f ${i === 0 ? 'auto' : ''}" data-act="${x.dir ? 'browseIdx' : 'importIdx'}" data-arg="${i}">
+          <span class="gic">${x.root ? (x.name.indexOf('USB') === 0 ? '💾' : '📱') : x.dir ? '📁' : '📄'}</span>
+          <span class="nm"><b class="nt">${esc(x.name)}</b>${x.dir ? '' : `<small class="ltr">${fmtMB(x.size)}</small>`}</span></button>`).join('');
+      modal(`<h2>📂 اختر ملف القنوات</h2><p class="mut small ltr">${esc(j.path || '/')}</p>
+        <div class="list">${j.parent != null && path ? `<button class="rowmain filerow f ${rows ? '' : 'auto'}" data-act="browse" data-arg="${esc(j.parent)}"><span class="gic">⬆️</span><span class="nm"><b>رجوع للمجلد السابق</b></span></button>` : ''}
+        ${rows || '<p class="mut">لا توجد مجلدات أو ملفات M3U هنا</p>'}</div>
+        <div class="bar end"><button class="btn f" data-act="sysPick">🗂 مدير الملفات</button><button class="btn f" data-act="closeModal">إلغاء</button></div>`);
+    },
+    browseIdx: i => ACT.browse(ui.lsItems[+i].path),
+    importIdx: i => { const f = ui.lsItems[+i]; ui.files = [f]; ACT.importFile(0); },
+    permThenBrowse: () => { ACT.perm(); closeModal(); ui.afterPerm = true; },
+    sysPick: async () => {
+      const id = 's' + Date.now().toString(36);
+      const r = await (await fetch('/api/pick?id=' + enc(id))).json();
+      if (!r.ok) return toast('تعذر فتح مدير الملفات', 'bad');
+      modal('<h2>🗂 اختر ملف M3U من مدير الملفات…</h2><div class="prog ind"><i></i></div><div class="bar end"><button class="btn f auto" data-act="closeModal">إلغاء</button></div>');
+      for (let k = 0; k < 600; k++) {
+        await new Promise(res => setTimeout(res, 1000));
+        const st = (await (await fetch('/api/pickstatus?id=' + enc(id))).json()).state;
+        if (st === 'pending' || st === 'none') continue;
+        closeModal();
+        if (st === 'done') {
+          const s = { id, type: 'file', name: readForm().name || 'ملف M3U' };
+          S.sources.push(s); loadSource(s, true);
+        } else if (st === 'nopicker') toast('لا يوجد مدير ملفات في الرسيفر؛ استخدم «تصفح ملفات الرسيفر»', 'bad');
+        else if (st === 'error') toast('تعذر قراءة الملف', 'bad');
+        return;
+      }
     },
     importFile: async i => {
       const f = ui.files[+i], name = (readForm().name) || f.name.replace(/\.[^.]+$/, '');

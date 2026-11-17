@@ -82,5 +82,11 @@ window.I18N_EN = {
   "المظهر": "Appearance", "ليلي": "Night", "نهاري": "Day", "تلقائي": "Auto", "لغة التطبيق": "App language", "مرحباً بك في M3U": "Welcome to M3U",
   "اختر لغة التطبيق والمظهر المناسب لك": "Choose your app language and appearance", "ابدأ ‹": "Start ›", "تلقائي حسب الوقت": "Auto by time",
   "لغة وأسماء الباقات": "Language & package names", "أسماء الباقات في الملف المرسل للرسيفر": "Package names in the file sent to the receiver",
-  "الوضع النهاري والليلي": "Day & night mode", "تبديل المظهر": "Toggle theme"
+  "الوضع النهاري والليلي": "Day & night mode", "تبديل المظهر": "Toggle theme", "📂 تصفح ملفات الرسيفر و USB": "📂 Browse receiver & USB files", "🗂 فتح مدير الملفات": "🗂 Open file manager",
+  "🔍 بحث تلقائي عن ملفات M3U": "🔍 Auto-search M3U files", "🔐 يلزم إذن الوصول للملفات": "🔐 File access needed",
+  "لعرض ملفات الرسيفر وفلاش USB، امنح التطبيق صلاحية «الوصول إلى كل الملفات» ثم ارجع للتطبيق.": "To show receiver and USB files, grant “All files access”, then return to the app.",
+  "🗂 فتح مدير الملفات بدلاً من ذلك": "🗂 Use file manager instead", "📂 اختر ملف القنوات": "📂 Choose channel file", "رجوع للمجلد السابق": "Back to previous folder",
+  "لا توجد مجلدات أو ملفات M3U هنا": "No folders or M3U files here", "🗂 مدير الملفات": "🗂 File manager", "تعذر فتح مدير الملفات": "Couldn't open file manager",
+  "🗂 اختر ملف M3U من مدير الملفات…": "🗂 Pick an M3U file in the file manager…", "لا يوجد مدير ملفات في الرسيفر؛ استخدم «تصفح ملفات الرسيفر»": "No file manager on the receiver; use “Browse receiver files”",
+  "تعذر قراءة الملف": "Couldn't read the file", "الذاكرة الداخلية": "Internal storage", "ملف M3U": "M3U file"
 };

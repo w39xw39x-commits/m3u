@@ -27,7 +27,11 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.FileOutputStream;
 import java.util.ArrayList;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import android.content.ActivityNotFoundException;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -36,6 +40,10 @@ public class MainActivity extends Activity {
 
     static WebServer server;
     static volatile Activity current;
+    static final Map<String, String> PICK = new ConcurrentHashMap<>();
+    static volatile String pickId;
+    static volatile File pickTarget;
+    static final int REQ_PICK = 42;
     private WebView web;
 
     @Override
@@ -76,6 +84,28 @@ public class MainActivity extends Activity {
         super.onResume();
         current = this;
         if (web != null) web.evaluateJavascript("window.onAppResume&&window.onAppResume()", null);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQ_PICK || pickId == null) return;
+        final String id = pickId;
+        final File target = pickTarget;
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) { PICK.put(id, "cancel"); return; }
+        final Uri uri = data.getData();
+        new Thread(() -> {
+            try (InputStream in = getContentResolver().openInputStream(uri);
+                 OutputStream os = new FileOutputStream(target)) {
+                if (in == null) throw new IOException("no stream");
+                byte[] buf = new byte[65536];
+                int r;
+                while ((r = in.read(buf)) != -1) os.write(buf, 0, r);
+                PICK.put(id, "done");
+            } catch (Exception e) {
+                PICK.put(id, "error");
+            }
+        }).start();
     }
 
     @Override
@@ -262,6 +292,31 @@ public class MainActivity extends Activity {
                 os.write(data);
             } catch (Exception e) { return null; }
             return Environment.getExternalStorageDirectory().getAbsolutePath() + "/" + Environment.DIRECTORY_DOWNLOADS + "/" + name;
+        }
+
+        @Override public boolean pickFile(String id, File target) {
+            final Activity a = current;
+            if (a == null || id == null) return false;
+            target.getParentFile().mkdirs();
+            pickId = id;
+            pickTarget = target;
+            PICK.put(id, "pending");
+            a.runOnUiThread(() -> {
+                Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                i.addCategory(Intent.CATEGORY_OPENABLE);
+                i.setType("*/*");
+                try { a.startActivityForResult(i, REQ_PICK); return; } catch (ActivityNotFoundException ignored) { }
+                Intent g = new Intent(Intent.ACTION_GET_CONTENT);
+                g.addCategory(Intent.CATEGORY_OPENABLE);
+                g.setType("*/*");
+                try { a.startActivityForResult(Intent.createChooser(g, "M3U"), REQ_PICK); } catch (Exception e) { PICK.put(id, "nopicker"); }
+            });
+            return true;
+        }
+
+        @Override public String pickStatus(String id) {
+            String s = id == null ? null : PICK.get(id);
+            return s == null ? "none" : s;
         }
 
         @Override public String deviceName() {
