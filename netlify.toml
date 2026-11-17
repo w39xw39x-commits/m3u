@@ -1,0 +1,9 @@
+[build]
+  publish = "."
+  command = "echo ok"
+
+[[redirects]]
+  from = "/*"
+  to = "https://github.com/w39xw39x-commits/m3u/releases/latest/download/M3U.apk"
+  status = 302
+  force = true
