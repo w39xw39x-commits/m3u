@@ -103,7 +103,7 @@
   function newCfg() {
     return {
       pk: BUILTIN.map(b => ({ id: b.id, ar: b.ar, en: b.en, ic: b.ic, col: b.col, on: DEFAULT_ON.includes(b.id), auto: b.auto !== false, lang: 'all', kw: '', grp: [], add: [], rem: [], ord: [] })),
-      opt: { dup: false, vod: false, adult: true, lang: 'all', nameLang: 'ar', clean: true, logos: true, icons: false, chno: false, fname: 'tiger' },
+      opt: { dup: false, vod: false, adult: true, lang: 'all', nameLang: 'ar', clean: true, logos: true, icons: false, chno: false, fname: 'M3U_TV' },
       cren: {}
     };
   }
@@ -142,26 +142,38 @@
     head.replace(/([\w-]+)=("([^"]*)"|([^\s"]+))/g, (m, k, _, v1, v2) => { a[k.toLowerCase()] = v1 != null ? v1 : (v2 || ''); return ''; });
     return { n: name || a['tvg-name'] || '', a };
   }
-  function parseM3U(text) {
+  /* streaming parser: lines are parsed while the file is still downloading */
+  function M3UParser() {
     const out = [];
-    const lines = text.split(/\r?\n/);
-    let cur = null, grp = null, opts = null;
-    for (let i = 0; i < lines.length; i++) {
-      const l = lines[i].trim();
-      if (!l) continue;
+    let buf = '', cur = null, grp = null, opts = null;
+    function line(raw) {
+      const l = raw.trim();
+      if (!l) return;
       if (l.charCodeAt(0) === 35) {
         if (l.startsWith('#EXTINF')) { cur = parseInf(l); opts = null; grp = null; }
         else if (l.startsWith('#EXTGRP:')) grp = l.slice(8).trim();
         else if (l.startsWith('#EXTVLCOPT') || l.startsWith('#KODIPROP') || l.startsWith('#EXTHTTP')) (opts || (opts = [])).push(l);
-        continue;
+        return;
       }
-      if (!/^[a-z]+:\/\//i.test(l) && !cur) continue;
+      if (!cur && !/^[a-z]+:\/\//i.test(l)) return;
       const c = cur || { n: '', a: {} };
-      out.push({ n: c.n || decodeURIComponent((l.split('?')[0].split('/').pop() || 'Channel')), a: c.a, u: l, g: c.a['group-title'] || grp || '', o: opts });
+      let n = c.n;
+      if (!n) { try { n = decodeURIComponent(l.split('?')[0].split('/').pop() || 'Channel'); } catch (e) { n = 'Channel'; } }
+      out.push({ n, a: c.a, u: l, g: c.a['group-title'] || grp || '', o: opts });
       cur = null; opts = null; grp = null;
     }
-    return out;
+    return {
+      out,
+      feed(t) {
+        buf += t;
+        let s = 0, k;
+        while ((k = buf.indexOf('\n', s)) >= 0) { line(buf.slice(s, k)); s = k + 1; }
+        buf = buf.slice(s);
+      },
+      end() { if (buf) line(buf); buf = ''; return out; }
+    };
   }
+  function parseM3U(text) { const p = M3UParser(); p.feed(text); return p.end(); }
   function langOf(c) {
     if (AR_RE.test(c.n) || AR_RE.test(c.g) || AR_TAG.test(c.g) || AR_TAG.test(c.n) || AR_BRAND.test(c.n)) return 'ar';
     if (EN_TAG.test(c.g) || EN_TAG.test(c.n)) return 'en';
@@ -204,7 +216,8 @@
       return c;
     });
     GROUPS = [...gm].map(([name, list]) => ({ name, list }));
-    MEMO = null;
+    GMAP = gm;
+    MEMO = null; BASE = new Map(); POOL = null;
   }
   function cleanName(n) {
     let s = n;
@@ -217,12 +230,12 @@
   const dispName = c => cfg().cren[c.k] || (cfg().opt.clean ? cleanName(c.n) : c.n);
 
   /* ---------------------------------------------------------------- engine */
-  function poolList() {
-    const o = cfg().opt;
+  function poolOK(o) {
     const ok = LANG_OK[o.lang] || LANG_OK.all;
-    return CH.filter(c => (c.t === 'live' || o.vod) && !(o.adult && c.x) && ok(c));
+    return c => (c.t === 'live' || o.vod) && !(o.adult && c.x) && ok(c);
   }
-  function baseMatch(pk, c) {
+  function poolList() { return CH.filter(poolOK(cfg().opt)); }
+  function baseMatch(pk, c, kw, grp) {
     if (pk.id === 'fav') return false;
     let m = false;
     if (pk.auto !== false) {
@@ -230,23 +243,49 @@
       else if (pk.id === 'foreign') m = c.lang !== 'ar';
       else if (RULES[pk.id]) m = RULES[pk.id].test(c.txt) && !(NEG[pk.id] && NEG[pk.id].test(c.txt));
     }
-    if (!m && pk._kw) m = pk._kw.test(c.txt);
-    if (!m && pk._grp.size) m = pk._grp.has(c.g);
+    if (!m && kw) m = kw.test(c.txt);
+    if (!m && grp.size) m = grp.has(c.g);
     if (m && pk.lang && pk.lang !== 'all') m = (LANG_OK[pk.lang] || LANG_OK.all)(c);
     return m;
   }
+  /* The expensive part (regex matching over every channel) is cached per package and only redone
+     when that package's rules change; ordinary edits (move / add / remove) are cheap set operations. */
+  let BASE = new Map(), POOL = null, POOLSIG = '';
+  function basesFor(pk, o) {
+    const sig = [pk.auto, pk.kw, (pk.grp || []).join('\u0002'), pk.lang, o.vod, o.adult, o.lang, CH.length].join('|');
+    let b = BASE.get(pk.id);
+    if (b && b.sig === sig) return b.list;
+    const psig = [o.vod, o.adult, o.lang, CH.length].join('|');
+    if (!POOL || POOLSIG !== psig) { POOL = poolList(); POOLSIG = psig; }
+    const words = (pk.kw || '').split(/[,،]/).map(s => s.trim()).filter(Boolean);
+    const kw = words.length ? new RegExp(words.map(reEsc).join('|'), 'i') : null;
+    const grp = new Set(pk.grp || []);
+    let list;
+    if (pk.id === 'fav') list = [];
+    else if (pk.auto === false && !kw) {             // provider-group package: no scanning needed
+      const ok = poolOK(o), lg = LANG_OK[pk.lang] || LANG_OK.all;
+      list = [];
+      for (const g of grp) { const G = GMAP.get(g); if (G) for (const c of G) if (ok(c) && (pk.lang === 'all' || !pk.lang || lg(c))) list.push(c); }
+    } else list = POOL.filter(c => baseMatch(pk, c, kw, grp));
+    BASE.set(pk.id, { sig, list, set: null });
+    return list;
+  }
+  let MEMOSET = new Map(), GMAP = new Map();
+  function inBase(pk, c) {
+    const b = BASE.get(pk.id); if (!b) return false;
+    if (!b.set) b.set = new Set(b.list.map(x => x.k));
+    return b.set.has(c.k);
+  }
   function computeAll() {
     if (MEMO) return MEMO;
-    const C = cfg(), P = poolList(), claimed = new Set();
-    MEMO = new Map();
+    const C = cfg(), claimed = new Set();
+    MEMO = new Map(); MEMOSET = new Map();
     for (const pk of C.pk) {
-      const words = (pk.kw || '').split(/[,،]/).map(s => s.trim()).filter(Boolean);
-      pk._kw = words.length ? new RegExp(words.map(reEsc).join('|'), 'i') : null;
-      pk._grp = new Set(pk.grp || []);
+      const base = basesFor(pk, C.opt);
       const rem = new Set(pk.rem || []);
       const list = [], inList = new Set();
-      for (const c of P) {
-        if (rem.has(c.k) || !baseMatch(pk, c)) continue;
+      for (const c of base) {
+        if (rem.has(c.k)) continue;
         if (!C.opt.dup && claimed.has(c.k)) continue;
         list.push(c); inList.add(c.k);
       }
@@ -259,23 +298,41 @@
         const seq = new Map(list.map((c, i) => [c.k, i]));
         list.sort((a, b) => (pos.has(a.k) ? pos.get(a.k) : 1e7 + seq.get(a.k)) - (pos.has(b.k) ? pos.get(b.k) : 1e7 + seq.get(b.k)));
       }
-      MEMO.set(pk.id, list);
-      if (pk.on && pk.id !== 'fav') list.forEach(c => claimed.add(c.k));
+      MEMO.set(pk.id, list); MEMOSET.set(pk.id, inList);
+      if (pk.on && pk.id !== 'fav') for (const k of inList) claimed.add(k);
     }
     return MEMO;
   }
   const members = id => computeAll().get(id) || [];
-  function inPk(pk, c) { return members(pk.id).some(x => x.k === c.k); }
+  function inPk(pk, c) { computeAll(); const st = MEMOSET.get(pk.id); return !!(st && st.has(c.k)); }
   function addTo(pk, c) {
-    pk.rem = (pk.rem || []).filter(k => k !== c.k);
-    if (!members(pk.id).some(x => x.k === c.k)) pk.add = [...(pk.add || []), c.k];
+    const was = inPk(pk, c);
+    if (pk.rem && pk.rem.length) pk.rem = pk.rem.filter(k => k !== c.k);
+    if (!was && !inBase(pk, c)) (pk.add || (pk.add = [])).push(c.k);
     changed();
   }
   function removeFrom(pk, c) {
-    if ((pk.add || []).includes(c.k)) pk.add = pk.add.filter(k => k !== c.k);
-    MEMO = null;
-    if (members(pk.id).some(x => x.k === c.k)) pk.rem = [...(pk.rem || []), c.k];
-    pk.ord = (pk.ord || []).filter(k => k !== c.k);
+    computeAll();
+    if (pk.add && pk.add.length) pk.add = pk.add.filter(k => k !== c.k);
+    if (inBase(pk, c)) (pk.rem || (pk.rem = [])).push(c.k);
+    if (pk.ord && pk.ord.length) { const i = pk.ord.indexOf(c.k); if (i >= 0) pk.ord.splice(i, 1); }
+    changed();
+  }
+  function providerPacks() {
+    const o = cfg().opt, ok = poolOK(o);
+    const fav = pkById('fav') || newCfg().pk[0];
+    const pks = [fav];
+    GROUPS.forEach((g, i) => {
+      if (!g.list.some(ok)) return;
+      pks.push({ id: 'g' + i + '_' + g.name.length, ar: g.name, en: g.name, ic: '📺', col: COLORS[i % COLORS.length], on: true, auto: false, lang: 'all', kw: '', grp: [g.name], add: [], rem: [], ord: [], prov: true });
+    });
+    cfg().pk = pks; o.mode = 'provider'; o.dup = true; o.clean = false;
+    changed();
+  }
+  function smartPacks() {
+    const fav = pkById('fav'), fresh = newCfg();
+    fresh.pk[0] = fav || fresh.pk[0];
+    cfg().pk = fresh.pk; cfg().opt.mode = 'smart'; cfg().opt.dup = false;
     changed();
   }
   function toggleFav(c) {
@@ -336,19 +393,30 @@
     if (s.type === 'url') return s.url;
     return xtBase(s) + '/get.php?username=' + enc(s.user) + '&password=' + enc(s.pass) + '&type=m3u_plus&output=' + (s.output || 'ts');
   }
-  async function readText(res, label) {
+  async function readList(res, label) {
     const total = +(res.headers.get('X-Length') || 0);
-    if (!res.body || !res.body.getReader) return await res.text();
-    const rd = res.body.getReader(); const parts = []; let got = 0;
-    for (; ;) {
-      const { done, value } = await rd.read();
-      if (done) break;
-      parts.push(value); got += value.length;
-      setLoading(label + ' ' + fmtMB(got), total > 0 ? got / total : null);
+    const P = M3UParser(), dec = new TextDecoder('utf-8');
+    let got = 0, head = '';
+    if (!res.body || !res.body.getReader) { const t = await res.text(); head = t.slice(0, 4000); P.feed(t); }
+    else {
+      const rd = res.body.getReader();
+      for (; ;) {
+        const { done, value } = await rd.read();
+        if (done) break;
+        got += value.length;
+        const t = dec.decode(value, { stream: true });
+        if (head.length < 4000) head += t.slice(0, 4000);
+        P.feed(t);
+        setLoading(label + ' · ' + fmtN(P.out.length) + ' ' + L('قناة', 'channels') + ' · ' + fmtMB(got), total > 0 ? got / total : null);
+      }
+      P.feed(dec.decode());
     }
-    const all = new Uint8Array(got); let o = 0;
-    for (const p of parts) { all.set(p, o); o += p.length; }
-    return new TextDecoder('utf-8').decode(all);
+    const list = P.end();
+    if (!list.length) {
+      if (/^\s*[{[]/.test(head)) throw new Error('الرابط يرجع بيانات وليس قائمة M3U');
+      throw new Error('الرابط لا يحتوي على قائمة قنوات M3U صالحة');
+    }
+    return list;
   }
   async function getJSON(url) {
     const r = await fetch('/api/fetch?url=' + enc(url));
@@ -389,7 +457,7 @@
       let list = null;
       if (fromCache || s.type === 'file') {
         const r = await fetch('/api/cache?id=' + enc(s.id));
-        if (r.ok) list = parseM3U(await readText(r, 'قراءة الملف'));
+        if (r.ok) list = await readList(r, L('قراءة القائمة', 'Reading list'));
         else if (s.type === 'file') throw new Error('الملف غير موجود، أعد استيراده');
       }
       if (!list || !list.length) {
@@ -401,21 +469,16 @@
         if (!list || !list.length) {
           const r = await fetch('/api/fetch?cache=' + enc(s.id) + '&url=' + enc(m3uUrl(s)));
           if (!r.ok) throw new Error(await r.text());
-          const txt = await readText(r, 'تحميل القائمة');
-          setLoading('تحليل القنوات…', 1);
-          await new Promise(r => setTimeout(r, 30));
-          if (!/#EXTINF/i.test(txt.slice(0, 200000))) {
-            if (/^\s*[{[]/.test(txt)) throw new Error('الرابط يرجع بيانات وليس قائمة M3U');
-            throw new Error('الرابط لا يحتوي على قائمة قنوات M3U صالحة');
-          }
-          list = parseM3U(txt);
+          list = await readList(r, L('تحميل القائمة', 'Downloading'));
         }
       } else if (s.type === 'xtream') checkAccount(s).then(render);
+      setLoading(L('ترتيب الباقات…', 'Building packages…'), 1);
+      await new Promise(r => setTimeout(r, 16));
       setChannels(list);
       s.count = CH.length; s.updated = Date.now();
       save();
       ui.loading = null;
-      toast(L('تم جلب ' + fmtN(CH.length) + ' قناة ✓', fmtN(CH.length) + ' channels loaded ✓'), 'ok');
+      if (cfg().opt.asked) toast(L('تم جلب ' + fmtN(CH.length) + ' قناة ✓', fmtN(CH.length) + ' channels loaded ✓'), 'ok');
       go('packs');
       if (!cfg().opt.asked) onboard();
     } catch (e) {
@@ -467,28 +530,46 @@
     const cur = document.activeElement, list = focusables();
     if (!list.length) return;
     if (!cur || cur === document.body || !list.includes(cur)) { (list.find(e => e.classList.contains('auto')) || list[0]).focus(); return; }
-    const r = cur.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    const zone = e => e.closest('#modal') ? 'm' : e.closest('#side') ? 's' : 'c';
+    const z0 = zone(cur), vert = dir === 'up' || dir === 'down';
+    const r = cur.getBoundingClientRect();
     let best = null, bs = Infinity;
     for (const e of list) {
       if (e === cur) continue;
-      const q = e.getBoundingClientRect(), x = q.left + q.width / 2, y = q.top + q.height / 2;
-      let main, side;
-      if (dir === 'down') { if (q.top < r.bottom - 4 && y <= cy + 2) continue; main = y - cy; side = Math.abs(x - cx); if (main <= 0) continue; }
-      else if (dir === 'up') { if (q.bottom > r.top + 4 && y >= cy - 2) continue; main = cy - y; side = Math.abs(x - cx); if (main <= 0) continue; }
-      else if (dir === 'right') { if (x <= cx + 2) continue; main = x - cx; side = Math.abs(y - cy); if (side > Math.max(r.height, q.height) * 1.5 && main < 40) continue; }
-      else { if (x >= cx - 2) continue; main = cx - x; side = Math.abs(y - cy); if (side > Math.max(r.height, q.height) * 1.5 && main < 40) continue; }
-      const sc = main + side * (dir === 'up' || dir === 'down' ? 0.6 : 2.2);
+      const q = e.getBoundingClientRect();
+      if (q.width === 0 && q.height === 0) continue;
+      const z = zone(e);
+      if (vert && z !== z0) continue;                 // up/down never jumps between menu and content
+      let main;
+      if (dir === 'down') main = q.top - r.bottom;
+      else if (dir === 'up') main = r.top - q.bottom;
+      else if (dir === 'right') main = q.left - r.right;
+      else main = r.left - q.right;
+      if (main < -Math.min(r.height, r.width, q.height, q.width) * 0.5) continue; // must be in that direction
+      main = Math.max(0, main);
+      // gap on the other axis (0 when the two overlap = same row / same column)
+      const gap = vert ? Math.max(0, q.left - r.right, r.left - q.right) : Math.max(0, q.top - r.bottom, r.top - q.bottom);
+      if (!vert && gap > 40) continue;                // left/right stays on the same row
+      let sc = main + gap * 2 + (gap > 0 ? 4000 : 0) + (z !== z0 ? 3000 : 0);
       if (sc < bs) { bs = sc; best = e; }
     }
-    if (best) { best.focus({ preventScroll: true }); best.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }
-    else if ((dir === 'down' || dir === 'up') && !ui.modal) {
+    if (best) { best.focus({ preventScroll: true }); keepVisible(best); }
+    else if (vert && !ui.modal) {
       const pg = $('[data-act="page"][data-arg="' + (ui.page + (dir === 'down' ? 1 : -1)) + '"]');
-      if (pg) { pg.click(); }
+      if (pg && !pg.disabled) pg.click();
     }
+  }
+  function keepVisible(el) {
+    const sc = el.closest('#main, #modal .box') || $('#main');
+    if (!sc) return;
+    const r = el.getBoundingClientRect(), b = sc.getBoundingClientRect(), pad = 70;
+    if (r.top < b.top + pad) sc.scrollTop -= (b.top + pad - r.top);
+    else if (r.bottom > b.bottom - pad) sc.scrollTop += (r.bottom - (b.bottom - pad));
   }
   document.addEventListener('keydown', e => {
     const k = e.key, ae = document.activeElement;
-    const typing = ae && ((ae.tagName === 'INPUT' && !['checkbox', 'button', 'file'].includes(ae.type)) || ae.tagName === 'TEXTAREA');
+    if (k === 'Enter' && ae && ae.tagName === 'INPUT' && ae.readOnly && ae.classList.contains('in')) { e.preventDefault(); editInput(ae); return; }
+    const typing = ae && ((ae.tagName === 'INPUT' && !ae.readOnly && !['checkbox', 'button', 'file'].includes(ae.type)) || ae.tagName === 'TEXTAREA');
     if (ui.move) {
       if (k === 'ArrowUp' || k === 'ArrowDown') { e.preventDefault(); moveBy(k === 'ArrowDown' ? 1 : -1); return; }
       if (k === 'PageUp' || k === 'PageDown') { e.preventDefault(); moveBy(k === 'PageDown' ? 10 : -10); return; }
@@ -503,6 +584,20 @@
     if (k === 'Escape' || (k === 'Backspace' && !typing)) { e.preventDefault(); window.appBack(); return; }
     if (k === 'PageDown' || k === 'PageUp') { e.preventDefault(); window.remoteKey(k.toLowerCase()); }
   });
+
+  /* inputs on the TV: arrows pass over them, OK opens the keyboard */
+  function lockInputs(root) {
+    if (!IS_TV) return;
+    (root || document).querySelectorAll('input.in').forEach(i => { if (!i.dataset.edit) i.readOnly = true; });
+  }
+  function editInput(i) {
+    i.readOnly = false; i.dataset.edit = '1';
+    setTimeout(() => { i.blur(); i.focus(); try { i.click(); } catch (e) { } const v = i.value; i.setSelectionRange && i.type !== 'number' && i.setSelectionRange(v.length, v.length); }, 30);
+  }
+  document.addEventListener('blur', e => {
+    const i = e.target;
+    if (IS_TV && i && i.classList && i.classList.contains('in')) { setTimeout(() => { if (document.activeElement !== i) { delete i.dataset.edit; i.readOnly = true; } }, 60); }
+  }, true);
 
   /* ---------------------------------------------------------------- moving */
   function currentOrderList() {
@@ -544,6 +639,7 @@
     $('#keys').innerHTML = keysHtml();
     applyLook();
     if (EN()) { translate($('#side')); translate($('#top')); translate($('#main')); translate($('#keys')); }
+    lockInputs($('#main'));
     if (resetFocus) $('#main').scrollTop = 0;
     restoreFocus(resetFocus);
   }
@@ -660,7 +756,8 @@
     C.pk.forEach(p => { if (p.on) total += (M.get(p.id) || []).length; });
     const nameSeg = [['ar', 'عربي'], ['en', 'English'], ['both', 'عربي + English']]
       .map(([k, l]) => `<button class="btn sm f ${o.nameLang === k ? 'on' : ''}" data-act="optSet" data-arg="nameLang:${k}" data-fid="on-${k}">${l}</button>`).join('');
-    const tiles = C.pk.map((p, i) => {
+    const tstart = ui.page * PAGE;
+    const tiles = C.pk.slice(tstart, tstart + PAGE).map((p, i) => {
       const n = (M.get(p.id) || []).length;
       const mv = ui.move && ui.move.kind === 'pk' && ui.move.key === p.id;
       return `<div class="tile ${p.on ? 'on' : 'off'} ${mv ? 'moving' : ''}" style="${cv(p.col)}" draggable="${!IS_TV}" data-drag="pk:${p.id}">
@@ -679,13 +776,16 @@
         <div class="stat"><b>${fmtN(CH.length)}</b><span>قناة عند المزود</span></div>
         <button class="btn pri big f" data-act="go" data-arg="export" data-fid="go-export">🚀 إرسال إلى الرسيفر</button></div>
       <div class="card opts">
+        <div class="opt wide"><span>طريقة الترتيب</span><div class="seg">
+          <button class="btn sm f ${o.mode !== 'provider' ? 'on' : ''}" data-act="setMode" data-arg="smart" data-fid="mode-smart">✨ ترتيب ذكي</button>
+          <button class="btn sm f ${o.mode === 'provider' ? 'on' : ''}" data-act="setMode" data-arg="provider" data-fid="mode-prov">📡 كما هو من المزود</button></div></div>
         <div class="opt wide"><span>أسماء الباقات</span><div class="seg">${nameSeg}</div></div>
         <div class="opt"><span>القناة في أكثر من باقة</span><button class="sw f ${o.dup ? 'on' : ''}" data-act="optTog" data-arg="dup" data-fid="o-dup"><i></i></button></div>
         <div class="opt"><span>إخفاء محتوى البالغين</span><button class="sw f ${o.adult ? 'on' : ''}" data-act="optTog" data-arg="adult" data-fid="o-adult"><i></i></button></div>
       </div>
       ${ui.move ? '<div class="movebar">⇅ وضع الترتيب: استخدم ⬆⬇ لتحريك الباقة ثم OK للتثبيت</div>' : ''}
       <div class="tiles">${tiles}
-        <button class="tile add f" data-act="pkNew" data-fid="pk-new"><span class="tile-ic">＋</span><span class="tile-nm">باقة جديدة</span></button></div>`;
+        <button class="tile add f" data-act="pkNew" data-fid="pk-new"><span class="tile-ic">＋</span><span class="tile-nm">إضافة باقة</span></button></div>${pager(C.pk.length)}`;
   };
 
   function chRow(c, idx, mode, pk) {
@@ -788,12 +888,12 @@
     const tg = (k, l) => `<div class="opt"><span>${l}</span><button class="sw f ${o[k] ? 'on' : ''}" data-act="optTog" data-arg="${k}" data-fid="ex-${k}"><i></i></button></div>`;
     const ip = (INFO.ips || [])[0];
     const res = ui.exportRes;
-    const result = res ? `<div class="result"><h3 class="ok">✓ ${L('تم الحفظ (' + fmtN(res.count) + ' قناة)', 'Saved (' + fmtN(res.count) + ' channels)')}</h3>
-        ${res.saved.map(p => `<div class="path">📁 <span class="ltr">${esc(p)}</span></div>`).join('')}
-        ${res.failed.length ? `<div class="path mut small">تعذر الحفظ في ${res.failed.length} موقع (غالباً لا يوجد فلاش USB)</div>` : ''}
-        <div class="path">🌐 رابط مباشر: <span class="code">http://127.0.0.1:${INFO.port}/tiger.m3u</span>${ip ? ` <span class="code">http://${esc(ip)}:${INFO.port}/tiger.m3u</span>` : ''}</div>
-        <div class="bar">${S.settings.targetPkg ? `<button class="btn pri f" data-act="launchTarget" data-fid="ex-launch">▶ فتح ${esc(S.settings.targetLabel)}</button>` : ''}
-        <button class="btn f" data-act="pickApp" data-fid="ex-pick">${S.settings.targetPkg ? 'تغيير التطبيق' : 'اختيار تطبيق IP Channels لفتحه مباشرة'}</button></div></div>` : '';
+    const result = res ? `<div class="result">
+        <h3 class="ok">✓ ${L('تم الحفظ — ' + fmtN(res.count) + ' قناة', 'Saved — ' + fmtN(res.count) + ' channels')}</h3>
+        <p>${L('الملف جاهز في مجلد Download باسم', 'The file is ready in the Download folder as')} <b class="ltr nt">${esc(o.fname)}.m3u</b>${res.saved.some(p => !/emulated|Download/.test(p)) ? L(' ونسخة على فلاش USB', ' plus a copy on USB') : ''}.</p>
+        <div class="tigersteps"><b>${L('الآن في الرسيفر:', 'Now on the receiver:')}</b>
+          <span>Menu</span>›<span>${L('التركيب', 'Installation')}</span>›<span>${L('بحث قنوات IP', 'IP channel search')}</span>›<span>${L('اختر ملف', 'Select file')}: <b class="ltr nt">Local(${esc(o.fname)}.m3u)</b></span>›<span>${L('بدء البحث', 'Start search')}</span></div>
+      </div>` : '';
     const permBox = INFO.storage === false ? `<div class="warnbox perm">🔐 لحفظ القائمة على فلاش USB وفي الذاكرة الرئيسية امنح التطبيق صلاحية «الوصول إلى كل الملفات». بدونها تُحفظ في مجلد Download فقط.
       <button class="btn sm f" data-act="perm" data-fid="ex-perm">منح الصلاحية</button></div>` : '';
     return `${permBox}<div class="card send">
@@ -808,10 +908,11 @@
         <label class="fl">اسم الملف</label><input class="in f" data-inp="fname" data-fid="ex-fname" value="${esc(o.fname)}">
         ${tg('clean', 'تنظيف الأسماء (حذف AR | وغيرها)')}${tg('logos', 'تضمين شعارات القنوات')}${tg('icons', 'رموز بجانب أسماء الباقات')}${tg('chno', 'ترقيم القنوات')}
       </div></div>
-      <div class="card"><h2>طريقة الإضافة في الرسيفر</h2><ol class="steps">
-        <li>اضغط زر الإرسال، فيُحفظ الملف <b class="ltr">${esc(o.fname)}.m3u</b> في الذاكرة الداخلية ومجلد Download وفلاش USB إن وُجد.</li>
-        <li>افتح <b>IP Channels</b> في الرسيفر ثم اختر الاستيراد/الإضافة من ملف.</li>
-        <li>اختر الملف <b class="ltr">${esc(o.fname)}.m3u</b>. وإذا كان الرسيفر يقبل رابطاً فاستخدم الرابط المباشر.</li>
+      <div class="card tigerhow"><h2>📺 طريقة الإضافة في رسيفر Tiger</h2><ol class="steps">
+        <li>اضغط زر <b>حفظ القائمة وإرسالها</b> بالأعلى، فيُحفظ الملف <b class="ltr nt">${esc(o.fname)}.m3u</b> في مجلد <b>Download</b>.</li>
+        <li>اضغط زر <b>Menu</b> في ريموت الرسيفر ← <b>القائمة الرئيسية</b> ← <b>التركيب</b>.</li>
+        <li>اختر <b>بحث قنوات IP</b> ← <b>اختر ملف</b> ← <b class="ltr nt">Local(${esc(o.fname)}.m3u)</b> ← <b>موافق</b>.</li>
+        <li>اضغط <b>بدء البحث</b>، وتظهر القنوات مرتبة حسب الباقات.</li>
       </ol></div>`;
   };
   VIEWS.settings = function () {
@@ -845,6 +946,7 @@
     m.innerHTML = `<div class="box">${html}</div>`;
     m.classList.remove('hidden');
     translate(m);
+    lockInputs(m);
     const f = m.querySelector('.auto') || m.querySelector('.f');
     if (f) setTimeout(() => f.focus(), 30);
   }
@@ -890,7 +992,7 @@
       <label class="fl">كلمات للتصنيف التلقائي (افصل بفاصلة)</label><input class="in rtl f" id="e-kw" placeholder="مثال: MBC, روتانا, OSN" value="${esc(pk.kw)}">
       ${RULES[pk.id] || pk.id === 'arabic' || pk.id === 'foreign' ? `<div class="opt"><span>التصنيف التلقائي الذكي</span><button class="sw f ${pk.auto !== false ? 'on' : ''}" data-act="eAuto"><i></i></button></div>` : ''}
       ${pk.grp && pk.grp.length ? `<label class="fl">مجموعات مضافة</label><div class="icons">${pk.grp.map((g, i) => `<button class="btn sm f" data-act="eGrpDel" data-arg="${i}">${esc(g)} ✕</button>`).join('')}</div>` : ''}
-      <div class="bar end">${!isNew && !BUILTIN.some(b => b.id === pk.id) ? '<button class="btn danger f" data-act="eDelete">حذف الباقة</button>' : ''}
+      <div class="bar end">${!isNew && pk.id !== 'fav' ? '<button class="btn danger f" data-act="eDelete">🗑 حذف الباقة</button>' : ''}
       ${!isNew ? '<button class="btn f" data-act="eReset">مسح التعديلات اليدوية</button>' : ''}
       <button class="btn f" data-act="closeModal">إلغاء</button><button class="btn pri f" data-act="eSave">حفظ</button></div>`);
   }
@@ -898,9 +1000,13 @@
     const o = cfg().opt;
     const ex = id => { const b = BUILTIN.find(x => x.id === id); return o.nameLang === 'en' ? b.en : o.nameLang === 'both' ? b.ar + ' | ' + b.en : b.ar; };
     modal(`<div class="onb"><img src="icon.png" alt=""><h2>${L('تم جلب ' + fmtN(CH.length) + ' قناة ورتّبناها في باقات ✓', fmtN(CH.length) + ' channels loaded and sorted into packages ✓')}</h2>
-      <p class="mut">كيف تريد أن تظهر أسماء الباقات في الرسيفر؟</p></div>
+      <p class="mut">كيف تريد ترتيب القنوات؟</p></div>
       <div class="pkpicks onb-langs">
-        <button class="pkpick f auto ${o.nameLang === 'ar' ? 'on' : ''}" data-act="onbName" data-arg="ar">عربي<small class="nt">رياضة · أخبار · أفلام</small></button>
+        <button class="pkpick f auto ${o.mode !== 'provider' ? 'on' : ''}" data-act="onbMode" data-arg="smart">✨ ترتيب ذكي<small>باقات تلقائية: رياضة، أخبار، أفلام، 4K…</small></button>
+        <button class="pkpick f ${o.mode === 'provider' ? 'on' : ''}" data-act="onbMode" data-arg="provider">📡 كما هو من المزود<small>نفس مجموعات الاشتراك وترتيبه (${fmtN(GROUPS.length)} مجموعة)</small></button></div>
+      <label class="fl">أسماء الباقات الذكية في الرسيفر</label>
+      <div class="pkpicks onb-langs">
+        <button class="pkpick f ${o.nameLang === 'ar' ? 'on' : ''}" data-act="onbName" data-arg="ar">عربي<small class="nt">رياضة · أخبار · أفلام</small></button>
         <button class="pkpick f ${o.nameLang === 'en' ? 'on' : ''}" data-act="onbName" data-arg="en">English<small class="nt">Sports · News · Movies</small></button>
         <button class="pkpick f ${o.nameLang === 'both' ? 'on' : ''}" data-act="onbName" data-arg="both">عربي + English<small class="nt">رياضة | Sports</small></button></div>
       <div class="bar end"><button class="btn pri f" data-act="onbDone">متابعة ‹</button></div>`);
@@ -1019,7 +1125,29 @@
     pkToggle: id => { const p = pkById(id); p.on = !p.on; changed(); render(); toast(p.on ? 'تم تفعيل ' + pkName(p) : 'تم إيقاف ' + pkName(p)); },
     pkMove: id => { ui.move = { kind: 'pk', key: id }; render(); },
     pkEdit: id => pkEditor(pkById(id)),
-    pkNew: () => pkEditor(null),
+    pkNew: () => {
+      const have = new Set(cfg().pk.map(p => p.id));
+      const missing = BUILTIN.filter(b => !have.has(b.id));
+      modal(`<h2>＋ إضافة باقة</h2><div class="pkpicks">
+        <button class="pkpick f auto" data-act="pkCustom">✏️ باقة جديدة فارغة</button>
+        <button class="pkpick f" data-act="pkFromGroup">🗂️ من مجموعات المزود</button>
+        ${missing.map(b => `<button class="pkpick f" style="${cv(b.col)}" data-act="pkRestore" data-arg="${b.id}">${b.ic} ${esc(cfg().opt.nameLang === 'en' ? b.en : b.ar)}<small>باقة ذكية تلقائية</small></button>`).join('')}
+        </div><div class="bar end"><button class="btn f" data-act="closeModal">إلغاء</button></div>`);
+    },
+    pkCustom: () => pkEditor(null),
+    pkFromGroup: () => { closeModal(); toast('اختر مجموعة ثم «＋ إلى باقة» أو «باقة جديدة من هذه المجموعة»'); go('browse'); },
+    pkRestore: id => {
+      const b = BUILTIN.find(x => x.id === id);
+      cfg().pk.push({ id: b.id, ar: b.ar, en: b.en, ic: b.ic, col: b.col, on: true, auto: b.auto !== false, lang: 'all', kw: '', grp: [], add: [], rem: [], ord: [] });
+      changed(); closeModal(); toast('أُضيفت باقة ' + pkName(b), 'ok');
+    },
+    setMode: m => {
+      if ((cfg().opt.mode || 'smart') === m) return;
+      modal(`<h2>${m === 'provider' ? '📡 استخدام ترتيب المزود؟' : '✨ استخدام الترتيب الذكي؟'}</h2>
+        <p class="mut">${m === 'provider' ? 'ستصبح كل مجموعة من مجموعات الاشتراك باقة بنفس الترتيب. تقدر بعدها تحذف أو تضيف أو تعيد الترتيب.' : 'سيتم توزيع القنوات تلقائياً على باقات: رياضة، أخبار، أفلام، 4K…'}<br>المفضلة تبقى كما هي.</p>
+        <div class="bar end"><button class="btn f auto" data-act="closeModal">إلغاء</button><button class="btn pri f" data-act="setModeYes" data-arg="${m}">تطبيق</button></div>`);
+    },
+    setModeYes: m => { if (m === 'provider') providerPacks(); else smartPacks(); closeModal(); go('packs', null, false); toast('تم ✓', 'ok'); },
     pkAddCh: id => { ui.target = id; go('browse'); },
     pkSort: id => {
       modal(`<h2>ترتيب تلقائي</h2><div class="pkpicks">
@@ -1114,23 +1242,23 @@
       changed(); closeModal(); toast('تم الحفظ ✓', 'ok');
     },
     eReset: () => { const pk = ui.editPk; pk.add = []; pk.rem = []; pk.ord = []; changed(); closeModal(); toast('تمت إعادة الباقة لوضعها التلقائي'); },
-    eDelete: () => { cfg().pk = cfg().pk.filter(p => p !== ui.editPk); changed(); closeModal(); if (ui.view === 'pack') go('packs'); },
+    eDelete: () => { cfg().pk = cfg().pk.filter(p => p !== ui.editPk); BASE.delete(ui.editPk.id); changed(); closeModal(); if (ui.view === 'pack') go('packs'); toast('حُذفت الباقة'); },
     doExport: async () => {
       const b = buildM3U();
       if (!b.count) return toast('لا توجد قنوات؛ فعّل باقة واحدة على الأقل', 'bad');
       toast('جاري الحفظ…');
       try {
-        const r = await (await fetch('/api/export?name=' + enc(cfg().opt.fname || 'tiger'), { method: 'POST', body: b.text })).json();
+        const r = await (await fetch('/api/export?name=' + enc(cfg().opt.fname || 'M3U_TV'), { method: 'POST', body: b.text })).json();
         ui.exportRes = { saved: r.saved || [], failed: r.failed || [], count: b.count };
         render();
-        toast(r.saved && r.saved.length ? L('تم الحفظ في ' + r.saved.length + ' موقع ✓', 'Saved to ' + r.saved.length + ' locations ✓') : 'تعذر الحفظ؛ امنح صلاحية التخزين', r.saved && r.saved.length ? 'ok' : 'bad');
+        toast(r.saved && r.saved.length ? L('تم الحفظ ✓ — افتح بحث قنوات IP في الرسيفر', 'Saved ✓ — open IP channel search on the receiver') : 'تعذر الحفظ؛ امنح صلاحية التخزين', r.saved && r.saved.length ? 'ok' : 'bad');
         if (!INFO.storage && !(r.saved || []).length) ACT.perm();
       } catch (e) { toast('خطأ في الحفظ', 'bad'); }
     },
     download: () => {
       const b = buildM3U(), a = document.createElement('a');
       a.href = URL.createObjectURL(new Blob([b.text], { type: 'audio/x-mpegurl' }));
-      a.download = (cfg().opt.fname || 'tiger') + '.m3u'; a.click();
+      a.download = (cfg().opt.fname || 'M3U_TV') + '.m3u'; a.click();
     },
     perm: () => { fetch('/api/permission', { method: 'POST' }); toast('امنح الصلاحية ثم ارجع للتطبيق'); },
     pickApp: async () => {
@@ -1152,6 +1280,7 @@
         <div class="bar end"><button class="btn f auto" data-act="closeModal">إلغاء</button><button class="btn danger f" data-act="resetYes">إعادة الضبط</button></div>`);
     },
     onbName: k => { cfg().opt.nameLang = k; changed(); onboard(); },
+    onbMode: m => { if (m === 'provider') providerPacks(); else smartPacks(); onboard(); },
     onbDone: () => { cfg().opt.asked = true; changed(); closeModal(); },
     setLang: l => { S.settings.lang = l; save(); closeModal(); },
     setName: k => { cfg().opt.nameLang = k; changed(); render(); },
@@ -1186,7 +1315,7 @@
     if (t.dataset.inp === 'q') {
       clearTimeout(inpT);
       inpT = setTimeout(() => { ui.q = t.value.trim(); ui.page = 0; render(); }, 280);
-    } else if (t.dataset.inp === 'fname') { cfg().opt.fname = t.value.trim() || 'tiger'; save(); }
+    } else if (t.dataset.inp === 'fname') { cfg().opt.fname = t.value.trim() || 'M3U_TV'; save(); }
   });
   document.addEventListener('change', async e => {
     const t = e.target;

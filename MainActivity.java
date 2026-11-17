@@ -166,9 +166,8 @@ public class MainActivity extends Activity {
             File internal = Environment.getExternalStorageDirectory();
             if (internal != null) {
                 roots.add(internal.getAbsolutePath());
-                list.add(new File[]{internal, new File(internal, "Download")});
+                // Tiger "IP channel search" reads files from Download — save only there on the receiver
                 list.add(new File[]{new File(internal, "Download")});
-                list.add(new File[]{new File(internal, "M3U")});
             }
             // Removable volumes (USB flash / SD). Root first, then the app folder on that volume (always writable).
             File[] appDirs = ctx.getExternalFilesDirs(null);

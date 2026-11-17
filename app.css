@@ -45,7 +45,7 @@ main{flex:1;display:flex;flex-direction:column;min-width:0}
 .chip{display:inline-flex;align-items:center;gap:6px;background:var(--glass);border:1px solid var(--line);border-radius:999px;padding:5px 12px;font-size:12.5px;white-space:nowrap}
 .chip i{font-style:normal}
 .chip.ok{color:var(--go);border-color:rgba(52,211,153,.4)} .chip.bad{color:var(--bad);border-color:rgba(255,85,119,.4)} .chip.warn{color:var(--warn);border-color:rgba(251,191,36,.4)}
-#main{flex:1;overflow:auto;padding:22px 26px 30px}
+#main{flex:1;overflow:auto;padding:22px 26px 60px}
 #keys{display:flex;gap:22px;justify-content:center;padding:9px;font-size:12.5px;color:var(--mut);border-top:1px solid var(--line);background:rgba(6,10,22,.85)}
 #keys b{color:#fff;background:var(--glass2);border:1px solid var(--line2);border-radius:6px;padding:1px 7px;margin-inline-end:5px;font-weight:600}
 
@@ -180,7 +180,7 @@ label.fl{display:block;font-size:13px;color:var(--mut);margin:12px 0 6px;font-we
 /* ---------- export */
 .grid-ex{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 .grid-ex .card{margin:0}
-.erows{display:flex;flex-direction:column;gap:6px;max-height:300px;overflow:auto}
+.erows{display:flex;flex-direction:column;gap:6px}
 .erow{display:flex;justify-content:space-between;padding:8px 12px;border-radius:10px;background:rgba(4,8,20,.45);border-inline-start:4px solid var(--c)}
 .erow b{color:var(--c);font-family:"Inter",sans-serif}
 .etotal{display:flex;justify-content:space-between;margin-top:12px;padding-top:12px;border-top:1px solid var(--line);font-size:16px}
@@ -283,3 +283,15 @@ label.fl{display:block;font-size:13px;color:var(--mut);margin:12px 0 6px;font-we
 [data-theme=light] .card.send{background:linear-gradient(120deg,rgba(34,211,238,.12),rgba(139,92,246,.10)),#fff}
 .tile-nm,.pkpick span,.erow span{unicode-bidi:plaintext}
 .pkpick.on{border-color:var(--c,#22d3ee);background:var(--c30,rgba(34,211,238,.18))}
+
+/* TV: no stray focus rings on scroll areas, no smooth-scroll lag */
+*:focus{outline:none}
+#main,#modal .box{scroll-behavior:auto}
+.in[readonly]{cursor:pointer}
+.in[readonly].f:focus::placeholder{color:var(--c1)}
+.opts .opt.wide{grid-column:1/-1}
+
+.tigersteps{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:10px;font-size:15px}
+.tigersteps span{background:var(--glass2);border:1px solid var(--line2);border-radius:9px;padding:6px 11px}
+#modal .box{padding:20px 22px}
+.onb img{width:56px}

@@ -88,5 +88,17 @@ window.I18N_EN = {
   "🗂 فتح مدير الملفات بدلاً من ذلك": "🗂 Use file manager instead", "📂 اختر ملف القنوات": "📂 Choose channel file", "رجوع للمجلد السابق": "Back to previous folder",
   "لا توجد مجلدات أو ملفات M3U هنا": "No folders or M3U files here", "🗂 مدير الملفات": "🗂 File manager", "تعذر فتح مدير الملفات": "Couldn't open file manager",
   "🗂 اختر ملف M3U من مدير الملفات…": "🗂 Pick an M3U file in the file manager…", "لا يوجد مدير ملفات في الرسيفر؛ استخدم «تصفح ملفات الرسيفر»": "No file manager on the receiver; use “Browse receiver files”",
-  "تعذر قراءة الملف": "Couldn't read the file", "الذاكرة الداخلية": "Internal storage", "ملف M3U": "M3U file"
+  "تعذر قراءة الملف": "Couldn't read the file", "الذاكرة الداخلية": "Internal storage", "ملف M3U": "M3U file", "كيف تريد ترتيب القنوات؟": "How do you want your channels organized?", "✨ ترتيب ذكي": "✨ Smart sorting",
+  "باقات تلقائية: رياضة، أخبار، أفلام، 4K…": "Automatic packages: Sports, News, Movies, 4K…", "📡 كما هو من المزود": "📡 As the provider has it",
+  "نفس مجموعات الاشتراك وترتيبه (": "Same groups & order as the subscription (", "مجموعة)": "groups)", "أسماء الباقات الذكية في الرسيفر": "Smart package names on the receiver",
+  "طريقة الترتيب": "Organization", "إضافة باقة": "Add package", "＋ إضافة باقة": "＋ Add package", "✏️ باقة جديدة فارغة": "✏️ New empty package",
+  "🗂️ من مجموعات المزود": "🗂️ From provider groups", "باقة ذكية تلقائية": "Smart auto package", "🗑 حذف الباقة": "🗑 Delete package",
+  "📡 استخدام ترتيب المزود؟": "📡 Use the provider's order?", "✨ استخدام الترتيب الذكي؟": "✨ Use smart sorting?",
+  "ستصبح كل مجموعة من مجموعات الاشتراك باقة بنفس الترتيب. تقدر بعدها تحذف أو تضيف أو تعيد الترتيب.": "Every subscription group becomes a package in the same order. You can then delete, add or reorder.",
+  "سيتم توزيع القنوات تلقائياً على باقات: رياضة، أخبار، أفلام، 4K…": "Channels will be sorted automatically into Sports, News, Movies, 4K…", "المفضلة تبقى كما هي.": "Favorites are kept.",
+  "تطبيق": "Apply", "حُذفت الباقة": "Package deleted", "اختر مجموعة ثم «＋ إلى باقة» أو «باقة جديدة من هذه المجموعة»": "Pick a group, then “＋ To package” or “New package from this group”",
+  "ترتيب الباقات…": "Building packages…", "قراءة القائمة": "Reading list", "تحميل القائمة": "Downloading", "📺 طريقة الإضافة في رسيفر Tiger": "📺 How to add it on the Tiger receiver",
+  "اضغط زر": "Press", "حفظ القائمة وإرسالها": "Save list & send", "بالأعلى، فيُحفظ الملف": "above; the file", "في مجلد": "is saved in the", "في ريموت الرسيفر ←": "on the receiver remote →",
+  "القائمة الرئيسية": "Main menu", "التركيب": "Installation", "اختر": "Choose", "بحث قنوات IP": "IP channel search", "اختر ملف": "Select file", "موافق": "OK",
+  "بدء البحث": "Start search", "، وتظهر القنوات مرتبة حسب الباقات.": ", and the channels appear sorted by package."
 };
