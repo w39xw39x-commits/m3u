@@ -615,20 +615,20 @@
   VIEWS.subs = function () {
     const t = ui.srcTab, e = ui.editSrc || {};
     const tabs = [['link', '🔗 رابط اشتراك'], ['xtream', '🔑 Xtream'], ['file', '📁 ملف M3U']]
-      .map(([k, l]) => `<button class="tab f ${t === k ? 'on' : ''}" data-act="srcTab" data-arg="${k}" data-fid="tab-${k}">${l}</button>`).join('');
+      .map(([k, l]) => `<button class="tab f ${t === k ? 'on auto' : ''}" data-act="srcTab" data-arg="${k}" data-fid="tab-${k}">${l}</button>`).join('');
     let form = '';
     if (t === 'link') form = `
       <label class="fl">رابط الاشتراك (M3U أو رابط get.php)</label>
-      <input class="in f auto" id="f-url" data-fid="f-url" placeholder="http://server:port/get.php?username=…&password=…" value="${esc(e.url || '')}">
+      <input class="in f" id="f-url" data-fid="f-url" placeholder="http://server:port/get.php?username=…&password=…" value="${esc(e.url || '')}">
       <div class="hint">يتعرّف التطبيق تلقائياً على نوع الرابط ويفحص حالة الاشتراك.</div>`;
     else if (t === 'xtream') form = `
-      <label class="fl">عنوان السيرفر</label><input class="in f auto" id="f-server" data-fid="f-server" placeholder="http://server.com:8080" value="${esc(e.server || '')}">
+      <label class="fl">عنوان السيرفر</label><input class="in f" id="f-server" data-fid="f-server" placeholder="http://server.com:8080" value="${esc(e.server || '')}">
       <div class="grid2"><div><label class="fl">اسم المستخدم</label><input class="in f" id="f-user" data-fid="f-user" value="${esc(e.user || '')}"></div>
       <div><label class="fl">كلمة المرور</label><input class="in f" id="f-pass" data-fid="f-pass" value="${esc(e.pass || '')}"></div></div>
       <label class="fl">نوع البث</label><div class="seg">${['ts', 'm3u8'].map(o => `<button class="btn sm f ${(e.output || 'ts') === o ? 'on' : ''}" data-act="xtOut" data-arg="${o}" data-fid="xo-${o}">${o.toUpperCase()}</button>`).join('')}</div>`;
     else form = `
       <div class="filebox">
-        <button class="btn pri f auto" data-act="browse" data-arg="" data-fid="pick-browse">📂 تصفح ملفات الرسيفر و USB</button>
+        <button class="btn pri f" data-act="browse" data-arg="" data-fid="pick-browse">📂 تصفح ملفات الرسيفر و USB</button>
         <button class="btn f" data-act="sysPick" data-fid="pick-sys">🗂 فتح مدير الملفات</button>
         <button class="btn f" data-act="pickDevice" data-fid="pick-dev">🔍 بحث تلقائي عن ملفات M3U</button>
         ${IS_TV ? '' : `<label class="btn f" tabindex="0" data-fid="pick-pc">💻 رفع من الكمبيوتر<input type="file" id="f-file" accept=".m3u,.m3u8,.txt" hidden></label>`}
@@ -924,7 +924,7 @@
     go: v => go(v),
     page: p => { ui.page = Math.max(0, +p); ui.move = null; render(true); },
     closeModal: () => closeModal(),
-    srcTab: t => { readForm(); ui.srcTab = t; render(); },
+    srcTab: t => { readForm(); ui.srcTab = t; S.settings.srcTab = t; save(); render(); },
     xtOut: o => { readForm(); ui.editSrc.output = o; render(); },
     srcAdd: () => {
       const f = readForm();
@@ -1230,6 +1230,7 @@
     try { const st = await (await fetch('/api/state')).json(); if (st && st.sources) S = Object.assign(S, st); } catch (e) { }
     S.settings = S.settings || {};
     applyLook();
+    if (S.settings.srcTab) ui.srcTab = S.settings.srcTab;
     const s = src();
     if (s && s.count) { loadSource(s, true); }
     else { ui.view = 'subs'; render(true); }
