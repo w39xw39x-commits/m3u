@@ -295,3 +295,5 @@ label.fl{display:block;font-size:13px;color:var(--mut);margin:12px 0 6px;font-we
 .tigersteps span{background:var(--glass2);border:1px solid var(--line2);border-radius:9px;padding:6px 11px}
 #modal .box{padding:20px 22px}
 .onb img{width:56px}
+
+.notes{background:var(--glass);border:1px solid var(--line);border-radius:12px;padding:12px 16px;line-height:1.9;max-height:44vh;overflow:auto;margin-top:8px}

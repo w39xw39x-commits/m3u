@@ -31,7 +31,13 @@ public class WebServer {
         /** Opens the system file picker; the chosen file is copied to cacheFile(id). */
         boolean pickFile(String id, File target);
         String pickStatus(String id);
+        /** {"name":"1.0.9","code":9} */
+        String appVersionJson();
+        /** Hands a downloaded APK to the system installer. */
+        boolean installApk(File apk);
     }
+
+    private final Map<String, Object> upd = new java.util.concurrent.ConcurrentHashMap<>();
 
     public static final String VERSION = "1.0.0";
     static final String UA = "VLC/3.0.20 LibVLC/3.0.20";
@@ -203,6 +209,32 @@ public class WebServer {
             case "/api/pickstatus":
                 json(out, "{\"state\":" + js(host.pickStatus(q.get("id"))) + "}");
                 return;
+            case "/api/update": {
+                final String url = q.get("url");
+                if (url == null || !url.startsWith("https://")) { send(out, 400, "text/plain", bytes("url")); return; }
+                if ("downloading".equals(upd.get("state"))) { json(out, "{\"ok\":true}"); return; }
+                upd.put("state", "downloading"); upd.put("got", 0L); upd.put("total", -1L);
+                new Thread(() -> {
+                    File f = new File(host.dataDir(), "update.apk");
+                    try {
+                        HttpURLConnection c = open(url, 20000, 60000);
+                        if (c.getResponseCode() >= 400) throw new IOException("HTTP " + c.getResponseCode());
+                        upd.put("total", (long) c.getContentLength());
+                        try (InputStream is = c.getInputStream(); OutputStream fo = new FileOutputStream(f)) {
+                            byte[] buf = new byte[65536]; int r; long got = 0;
+                            while ((r = is.read(buf)) != -1) { fo.write(buf, 0, r); got += r; upd.put("got", got); }
+                        }
+                        c.disconnect();
+                        upd.put("state", host.installApk(f) ? "installing" : "error");
+                    } catch (Exception e) { upd.put("state", "error"); upd.put("error", String.valueOf(e.getMessage())); }
+                }, "updater").start();
+                json(out, "{\"ok\":true}");
+                return;
+            }
+            case "/api/updstatus":
+                json(out, "{\"state\":" + js(String.valueOf(upd.getOrDefault("state", "idle"))) + ",\"got\":" + upd.getOrDefault("got", 0L)
+                        + ",\"total\":" + upd.getOrDefault("total", -1L) + ",\"error\":" + js((String) upd.get("error")) + "}");
+                return;
             case "/api/probe":
                 json(out, probe(q.get("url")));
                 return;
@@ -267,7 +299,7 @@ public class WebServer {
         File pl = new File(host.dataDir(), "playlist.m3u");
         return "{\"version\":" + js(VERSION) + ",\"port\":" + port + ",\"ips\":" + ips + ",\"exportDirs\":" + dirs
                 + ",\"storage\":" + host.hasStoragePermission() + ",\"device\":" + js(host.deviceName())
-                + ",\"playlist\":" + (pl.exists() ? pl.length() : -1) + "}";
+                + ",\"playlist\":" + (pl.exists() ? pl.length() : -1) + ",\"app\":" + host.appVersionJson() + "}";
     }
 
     private File cacheFile(String id) {

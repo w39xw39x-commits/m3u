@@ -506,6 +506,7 @@
     render(true);
   }
   window.appBack = function () {
+    if (ui.forced) return true;
     if (ui.modal) { closeModal(); return true; }
     if (ui.move) { ui.move = null; render(); return true; }
     const h = ui.hist.pop();
@@ -568,7 +569,7 @@
   }
   document.addEventListener('keydown', e => {
     const k = e.key, ae = document.activeElement;
-    if (k === 'Enter' && ae && ae.tagName === 'INPUT' && ae.readOnly && ae.classList.contains('in')) { e.preventDefault(); editInput(ae); return; }
+    if (k === 'Enter' && ae && ae.tagName === 'INPUT' && ae.readOnly && ae.classList.contains('in')) { e.preventDefault(); nativeEdit(ae); return; }
     const typing = ae && ((ae.tagName === 'INPUT' && !ae.readOnly && !['checkbox', 'button', 'file'].includes(ae.type)) || ae.tagName === 'TEXTAREA');
     if (ui.move) {
       if (k === 'ArrowUp' || k === 'ArrowDown') { e.preventDefault(); moveBy(k === 'ArrowDown' ? 1 : -1); return; }
@@ -594,6 +595,22 @@
     i.readOnly = false; i.dataset.edit = '1';
     setTimeout(() => { i.blur(); i.focus(); try { i.click(); } catch (e) { } const v = i.value; i.setSelectionRange && i.type !== 'number' && i.setSelectionRange(v.length, v.length); }, 30);
   }
+  let nativeEl = null;
+  function nativeEdit(i) {
+    if (window.AndroidBridge && AndroidBridge.prompt) {
+      nativeEl = i;
+      const lab = i.previousElementSibling && i.previousElementSibling.classList.contains('fl') ? i.previousElementSibling.textContent : (i.placeholder || '');
+      AndroidBridge.prompt(i.id || i.dataset.fid || 'x', tr(lab).replace(/^🔍\s*/, ''), i.value || '', i.id === 'f-pass');
+    } else editInput(i);
+  }
+  window.onNativeInput = function (id, text) {
+    let el = nativeEl && document.contains(nativeEl) ? nativeEl : (document.getElementById(id) || [...document.querySelectorAll('[data-fid]')].find(x => x.dataset.fid === id));
+    if (!el) return;
+    el.value = text;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    if (el.id && el.id.indexOf('f-') === 0) readForm();
+    el.focus({ preventScroll: true });
+  };
   document.addEventListener('blur', e => {
     const i = e.target;
     if (IS_TV && i && i.classList && i.classList.contains('in')) { setTimeout(() => { if (document.activeElement !== i) { delete i.dataset.edit; i.readOnly = true; } }, 60); }
@@ -936,11 +953,15 @@
       <div class="card"><h2>النسخ الاحتياطي</h2><div class="bar">
         ${IS_TV ? '' : '<button class="btn f" data-act="backup" data-fid="st-bk">⬇ حفظ نسخة من الإعدادات</button><label class="btn f" tabindex="0">⬆ استعادة<input type="file" id="f-restore" accept=".json" hidden></label>'}
         <button class="btn danger f" data-act="resetCfg" data-fid="st-reset">إعادة ضبط باقات الاشتراك الحالي</button></div></div>
+      <div class="card"><h2>التحديثات</h2><div class="opt"><span>${L('النسخة الحالية', 'Current version')} <b class="ltr">v${esc((INFO.app || {}).name || INFO.version || '')}</b></span>
+        <button class="btn f" data-act="checkUpd" data-fid="st-upd">🔄 ${L('التحقق من التحديثات', 'Check for updates')}</button></div>
+        <div class="hint">${L('التطبيق يتحقق تلقائياً عند كل تشغيل، ويثبّت التحديث بضغطة بدون Downloader.', 'The app checks on every launch and installs updates in one tap, no Downloader needed.')}</div></div>
       <div class="card"><h2>عن التطبيق</h2><p class="mut">M3U v${esc(INFO.version || '')} · ${esc(INFO.device || '')}</p></div>`;
   };
 
   /* ---------------------------------------------------------------- modal / toast */
   function modal(html) {
+    if (ui.forced && !ui.updFlow) return;   // mandatory update stays on top
     ui.modal = true;
     const m = $('#modal');
     m.innerHTML = `<div class="box">${html}</div>`;
@@ -951,6 +972,7 @@
     if (f) setTimeout(() => f.focus(), 30);
   }
   function closeModal() {
+    if (ui.forced && !ui.forceClose) return;
     ui.modal = null;
     $('#modal').classList.add('hidden');
     $('#modal').innerHTML = '';
@@ -1025,6 +1047,7 @@
   }
 
   /* ---------------------------------------------------------------- actions */
+  let ACT_EXTRA = {};
   const chAt = i => CH[+i];
   const ACT = {
     go: v => go(v),
@@ -1306,7 +1329,7 @@
   document.addEventListener('click', e => {
     const t = e.target.closest('[data-act]');
     if (!t || t.disabled) return;
-    const fn = ACT[t.dataset.act];
+    const fn = ACT[t.dataset.act] || ACT_EXTRA[t.dataset.act];
     if (fn) { e.preventDefault(); fn(t.dataset.arg, t, e); }
   });
   let inpT;
@@ -1350,6 +1373,77 @@
     changed(); render();
   });
 
+  /* ---------------------------------------------------------------- updates */
+  const REPO = 'w39xw39x-commits/m3u';
+  async function getNotes() {
+    try {
+      const j = await getJSON('https://raw.githubusercontent.com/' + REPO + '/main/changes.json?t=' + Date.now());
+      return (EN() && j.notes_en ? j.notes_en : j.notes) || [];
+    } catch (e) { return []; }
+  }
+  const fmtDate = d => { try { return new Date(d).toLocaleDateString(EN() ? 'en-GB' : 'ar-SA-u-nu-latn', { day: 'numeric', month: 'long', year: 'numeric' }); } catch (e) { return ''; } };
+  function umodal(h) { ui.updFlow = true; modal(h); ui.updFlow = false; }
+  async function checkUpdate(manual) {
+    const cur = (INFO.app || {}).code || 0;
+    if (!cur && !manual) return;
+    let rel;
+    try { rel = await getJSON('https://api.github.com/repos/' + REPO + '/releases/latest'); }
+    catch (e) { if (manual) toast('تعذر التحقق من التحديثات', 'bad'); return; }
+    const code = +(String(rel.tag_name || '').split('.').pop()) || 0;
+    const asset = (rel.assets || []).find(a => /\.apk$/i.test(a.name));
+    if (code > cur && asset) {
+      const notes = await getNotes();
+      const show = () => {
+        ui.updUrl = asset.browser_download_url; ui.forced = true;
+        umodal(`<div class="onb"><img src="icon.png" alt=""><h2>🎉 ${L('تحديث جديد متوفر', 'New update available')}</h2>
+          <p class="mut"><b class="ltr">v${esc(String(rel.tag_name).replace(/^v/, ''))}</b> · ${L('نُشر في', 'Released')} ${esc(fmtDate(rel.published_at))} · ${L('نسختك', 'yours')} <span class="ltr">v${esc((INFO.app || {}).name || '')}</span></p></div>
+          ${notes.length ? `<div class="notes nt">${notes.map(n => `<div>• ${esc(n)}</div>`).join('')}</div>` : ''}
+          <p class="mut small">${L('هذا التحديث إلزامي لمواصلة استخدام التطبيق.', 'This update is required to keep using the app.')}</p>
+          <div class="bar end"><button class="btn pri huge f auto" data-act="doUpdate">⬇ ${L('تحديث الآن', 'Update now')}</button></div>`);
+      };
+      show();
+    } else if (manual) toast(L('لديك أحدث نسخة ✓', 'You have the latest version ✓'), 'ok');
+  }
+  async function whatsNew() {
+    const a = INFO.app; if (!a || !a.code) return;
+    const seen = S.settings.seenCode;
+    S.settings.seenCode = a.code; save();
+    if (!seen || seen >= a.code) return;
+    const notes = await getNotes();
+    if (!notes.length) return;
+    const show = () => {
+      if (ui.modal || ui.loading) return setTimeout(show, 3000);
+      modal(`<div class="onb"><img src="icon.png" alt=""><h2>✨ ${L('ما الجديد في', "What's new in")} <span class="ltr">v${esc(a.name)}</span></h2></div>
+        <div class="notes nt">${notes.map(n => `<div>• ${esc(n)}</div>`).join('')}</div>
+        <div class="bar end"><button class="btn pri f auto" data-act="closeModal">${L('تمام', 'Got it')}</button></div>`);
+    };
+    show();
+  }
+  ACT_EXTRA = {
+    doUpdate: async () => {
+      if (!ui.updUrl) return;
+      await fetch('/api/update?url=' + enc(ui.updUrl), { method: 'POST' });
+      umodal(`<h2>⬇ ${L('جاري تحميل التحديث…', 'Downloading update…')}</h2><div class="prog"><i id="up-b"></i></div><p id="up-t" class="mut"></p>`);
+      for (let k = 0; k < 900; k++) {
+        await new Promise(r => setTimeout(r, 700));
+        let st; try { st = await (await fetch('/api/updstatus')).json(); } catch (e) { continue; }
+        const b = $('#up-b'), t = $('#up-t');
+        if (st.total > 0 && b) { b.style.width = Math.round(st.got / st.total * 100) + '%'; }
+        if (t) t.textContent = fmtMB(st.got || 0);
+        if (st.state === 'installing') {
+          return umodal(`<h2>📲 ${L('اضغط «تثبيت» في الشاشة التالية', 'Press “Install” on the next screen')}</h2>
+            <p class="mut">${L('إذا طلب الرسيفر السماح بتثبيت التطبيقات من هذا المصدر، فعّل الخيار ثم ارجع واضغط تحديث مرة أخرى.', 'If the receiver asks to allow installs from this source, enable it, come back and press Update again.')}</p>
+            <div class="bar end"><button class="btn pri big f auto" data-act="doUpdate">🔄 ${L('تحديث مرة أخرى', 'Update again')}</button></div>`);
+        }
+        if (st.state === 'error') {
+          return umodal(`<h2>⚠ ${L('تعذر تحميل التحديث', 'Update download failed')}</h2><p class="mut">${L('تأكد من اتصال الإنترنت ثم أعد المحاولة.', 'Check the internet connection and try again.')}</p>
+            <div class="bar end"><button class="btn pri big f auto" data-act="doUpdate">🔄 ${L('إعادة المحاولة', 'Try again')}</button></div>`);
+        }
+      }
+    },
+    checkUpd: () => checkUpdate(true)
+  };
+
   /* ---------------------------------------------------------------- init */
   async function refreshInfo() {
     try { INFO = await (await fetch('/api/info')).json(); renderSide(); } catch (e) { }
@@ -1364,6 +1458,8 @@
     if (s && s.count) { loadSource(s, true); }
     else { ui.view = 'subs'; render(true); }
     if (!S.settings.welcomed) welcome();
+    checkUpdate(false);
+    setTimeout(() => { if (!ui.forced) whatsNew(); }, 2500);
   }
   init();
   window.__m3u = { parseM3U, setChannels, computeAll, buildM3U, cfg, S: () => S, cleanName, detectLink, CH: () => CH };

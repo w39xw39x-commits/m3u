@@ -2,6 +2,16 @@ package com.tigeriptv.studio;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageInstaller;
+import android.text.InputType;
+import android.view.WindowManager;
+import android.webkit.JavascriptInterface;
+import android.widget.EditText;
+import java.io.FileInputStream;
 import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Context;
@@ -67,6 +77,7 @@ public class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 21) ws.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         web.setWebViewClient(new WebViewClient());
         web.setWebChromeClient(new WebChromeClient());
+        web.addJavascriptInterface(new Bridge(), "AndroidBridge");
         web.setFocusable(true);
         web.setFocusableInTouchMode(true);
         setContentView(web);
@@ -84,6 +95,49 @@ public class MainActivity extends Activity {
         super.onResume();
         current = this;
         if (web != null) web.evaluateJavascript("window.onAppResume&&window.onAppResume()", null);
+    }
+
+    /** Native text box: reliable TV keyboard (also works with phone remote apps). */
+    class Bridge {
+        @JavascriptInterface
+        public void prompt(final String id, final String title, final String value, final boolean password) {
+            runOnUiThread(() -> {
+                final EditText et = new EditText(MainActivity.this);
+                et.setSingleLine(true);
+                et.setText(value == null ? "" : value);
+                et.setSelection(et.getText().length());
+                et.setInputType(password ? (InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD)
+                        : (InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS | InputType.TYPE_TEXT_VARIATION_URI));
+                AlertDialog d = new AlertDialog.Builder(MainActivity.this)
+                        .setTitle(title == null || title.isEmpty() ? "M3U" : title)
+                        .setView(et)
+                        .setPositiveButton("OK", (dlg, w) -> send(id, et.getText().toString()))
+                        .setNegativeButton("✕", null)
+                        .create();
+                et.setOnEditorActionListener((v, actionId, ev) -> { send(id, et.getText().toString()); d.dismiss(); return true; });
+                if (d.getWindow() != null) d.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
+                d.show();
+                et.requestFocus();
+            });
+        }
+        private void send(String id, String text) {
+            if (web != null) web.evaluateJavascript("window.onNativeInput&&window.onNativeInput(" + WebServer.js(id) + "," + WebServer.js(text) + ")", null);
+        }
+    }
+
+    /** Result of the in-app updater (PackageInstaller). */
+    public static class InstallReceiver extends BroadcastReceiver {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            int status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, -999);
+            if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+                Intent confirm = intent.getParcelableExtra(Intent.EXTRA_INTENT);
+                if (confirm != null) {
+                    confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    try { context.startActivity(confirm); } catch (Exception ignored) { }
+                }
+            }
+        }
     }
 
     @Override
@@ -328,6 +382,34 @@ public class MainActivity extends Activity {
         @Override public String pickStatus(String id) {
             String s = id == null ? null : PICK.get(id);
             return s == null ? "none" : s;
+        }
+
+        @Override public String appVersionJson() {
+            try {
+                PackageInfo pi = ctx.getPackageManager().getPackageInfo(ctx.getPackageName(), 0);
+                long code = Build.VERSION.SDK_INT >= 28 ? pi.getLongVersionCode() : pi.versionCode;
+                return "{\"name\":" + WebServer.js(pi.versionName) + ",\"code\":" + code + "}";
+            } catch (Exception e) { return "{\"name\":\"?\",\"code\":0}"; }
+        }
+
+        @Override public boolean installApk(File apk) {
+            try {
+                PackageInstaller pi = ctx.getPackageManager().getPackageInstaller();
+                PackageInstaller.SessionParams params = new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+                int sid = pi.createSession(params);
+                PackageInstaller.Session session = pi.openSession(sid);
+                try (OutputStream o = session.openWrite("m3u.apk", 0, apk.length()); InputStream in = new FileInputStream(apk)) {
+                    byte[] buf = new byte[65536]; int r;
+                    while ((r = in.read(buf)) != -1) o.write(buf, 0, r);
+                    session.fsync(o);
+                }
+                Intent i = new Intent(ctx, InstallReceiver.class);
+                int flags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 31 ? 0x02000000 /* FLAG_MUTABLE */ : 0);
+                PendingIntent p = PendingIntent.getBroadcast(ctx, sid, i, flags);
+                session.commit(p.getIntentSender());
+                session.close();
+                return true;
+            } catch (Exception e) { return false; }
         }
 
         @Override public String deviceName() {
