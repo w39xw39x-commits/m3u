@@ -1,0 +1,1199 @@
+'use strict';
+(function () {
+  /* =====================================================================
+   *  M3U — IPTV playlist studio for Tiger receivers
+   * ===================================================================== */
+  const $ = (s, r) => (r || document).querySelector(s);
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const enc = encodeURIComponent;
+  const IS_TV = /[?&]tv=1/.test(location.search);
+  const PAGE = 60;
+  const AR_RE = /[؀-ۿ]/;
+  const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const fmtN = n => Number(n || 0).toLocaleString('en-US');
+  const cv = h => { const n = parseInt((h || '#3b82f6').slice(1), 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255;
+    return `--c:${h};` + [22, 25, 26, 30, 40, 45, 55, 60].map(a => `--c${a}:rgba(${r},${g},${b},${a / 100})`).join(';'); };
+  const fmtMB = b => (b / 1048576).toFixed(b > 10485760 ? 0 : 1) + ' MB';
+
+  /* ---------------------------------------------------------------- packages */
+  const BUILTIN = [
+    { id: 'fav', ar: 'المفضلة', en: 'Favorites', ic: '⭐', col: '#f5b301', auto: false },
+    { id: 'uhd', ar: 'قنوات 4K', en: '4K UHD', ic: '💎', col: '#8b5cf6' },
+    { id: 'sports', ar: 'رياضة', en: 'Sports', ic: '⚽', col: '#22c55e' },
+    { id: 'news', ar: 'أخبار', en: 'News', ic: '📰', col: '#ef4444' },
+    { id: 'islamic', ar: 'إسلامي', en: 'Islamic', ic: '🕌', col: '#14b8a6' },
+    { id: 'movies', ar: 'أفلام', en: 'Movies', ic: '🎬', col: '#f97316' },
+    { id: 'series', ar: 'مسلسلات', en: 'Series', ic: '🎭', col: '#ec4899' },
+    { id: 'kids', ar: 'أطفال', en: 'Kids', ic: '🧸', col: '#facc15' },
+    { id: 'docs', ar: 'طبيعة ووثائقي', en: 'Nature & Docs', ic: '🌿', col: '#84cc16' },
+    { id: 'variety', ar: 'منوع', en: 'Entertainment', ic: '🎉', col: '#06b6d4' }
+  ];
+  const LANG_NAMES = { all: 'كل اللغات', ar: 'عربي', en: 'إنجليزي', aren: 'عربي + إنجليزي', for: 'غير عربي' };
+  const DEFAULT_ON = ['fav', 'uhd', 'sports', 'news', 'islamic', 'movies', 'series', 'kids', 'docs', 'variety'];
+  const COLORS = ['#22d3ee', '#3b82f6', '#8b5cf6', '#ec4899', '#f97316', '#22c55e', '#14b8a6', '#facc15', '#ef4444'];
+  const RULES = {
+    uhd: /(^|[^a-z0-9])(4k|uhd|2160p?|8k)([^a-z0-9]|$)|ᵁᴴᴰ|⁴ᴷ/i,
+    sports: /sport|bein|ssc|espn|eurosport|dazn|arena|al ?kass|kass|ad ?sports?|abu ?dhabi ?sport|dubai ?sport|on ?time ?sport|\bnba\b|\bnfl\b|\bnhl\b|\bmlb\b|\bufc\b|\bwwe\b|premier ?league|la ?liga|serie ?a\b|bundesliga|ligue ?1|\bf1\b|formula|moto ?gp|tennis|golf|fight|boxing|racing|football|soccer|cricket|\byas\b|رياض|سبورت|الكأس|ملاعب|كورة|دوري/i,
+    news: /news|\bcnn\b|\bbbc\b|jazeera|jazira|arabiya|sky ?news|cnbc|bloomberg|france ?24|\brt\b|euronews|hadath|hurra|asharq|ekhbariya|trt ?world|\bdw\b|mayadeen|أخبار|اخبار|الجزيرة|العربية|الحدث|نيوز|الإخبارية|الاخبارية|الميادين|الشرق/i,
+    islamic: /quran|qur.?an|islam|makkah|makka|mecca|madina|medina|sunnah|sunna|iqraa?|\bmajd\b|al ?majd|resalah|risala|hidaya|\bhuda\b|peace ?tv|\bzad\b|قرآن|قران|اسلام|إسلام|مكة|المدينة|السنة|اقرأ|المجد|الرسالة|الهدى|زاد|الرحمة|طيبة|الحرم/i,
+    movies: /movie|film|cinema|\bcine|kino|\bhbo|starz|showtime|paramount|mbc ?2\b|mbc ?max|mbc ?action|mbc ?bollywood|rotana ?(cinema|classic|aflam)|fox ?movies|osn ?movies|zee ?aflam|aflam|أفلام|افلام|فيلم|سينما|اكشن|أكشن/i,
+    series: /series|drama|\bserie|shahid|mbc ?4\b|mbc ?5\b|osn ?series|rotana ?drama|novela|مسلسل|دراما/i,
+    kids: /\bkid|kids|cartoon|toon|disney|nick|junior|baby|spacetoon|space ?toon|majid|ajyal|\bjeem|cbeebies|boomerang|mbc ?3\b|baraem|karameesh|toyor|أطفال|اطفال|كرتون|سبيستون|ماجد|براعم|طيور|كراميش|أجيال/i,
+    docs: /nat ?geo|national ?geographic|discovery|animal|planet|nature|wild|documentar|\bdocu|history|science|travel|وثائق|ناشيونال|طبيعة|ديسكفري|حيوان|تاريخ|علوم|سفر/i,
+    variety: /entertain|general|variety|music|comedy|lifestyle|food|cooking|fashion|reality|mbc ?1\b|\blbc\b|\bmtv\b|rotana ?(khalijia|music|clip|comedy)|wanasah|منوع|ترفيه|عامة|موسيق|أغاني|اغاني|كوميد|طبخ|مطبخ/i
+  };
+  const NEG = {
+    news: /sport|docu|وثائق|رياض|kids|أطفال|business ?class/i,
+    movies: /sport|news|kids|أطفال/i,
+    variety: /sport|news|kids|أطفال|movie|film|أفلام|افلام/i
+  };
+  const AR_TAG = /(^|[\s|:\[\](){}\-_./])(ar|ara|arab|arabic|arabia|ksa|uae|egy|egypt|eg|kw|kuwait|qa|qatar|bh|bahrain|oman|jo|jordan|iq|iraq|sy|syria|lb|leb|lebanon|morocco|ma|mar|maroc|dz|algeria|tn|tunisia|ly|libya|sudan|ye|yemen|palestine|gcc|mena|saudi|khaleej|khaliji)(?=$|[\s|:\[\](){}\-_./])/i;
+  const AR_BRAND = /mbc|rotana|al ?kass|\bssc\b|al ?arabiya|jazeera|\blbc\b|dubai|abu ?dhabi|sharjah|ajman|oman ?tv|saudi|\bsbc\b|\bnile\b|\bcbc\b|al ?nahar|al ?hayah|\bdmc\b|shahid|spacetoon|majid|iqraa|al ?majd|al ?resalah|ajyal|\bjeem|baraem|bein ?sports? ?(ar|arabic|\d+ ?ar)/i;
+  const EN_TAG = /(^|[\s|:\[\](){}\-_./])(uk|gb|us|usa|en|eng|english|ca|can|canada|au|aus|australia|ie|ireland|nz|int|intl)(?=$|[\s|:\[\](){}\-_./])/i;
+  const OTHER_TAG = /(^|[\s|:\[\](){}\-_./])(fr|france|de|ger|germany|it|italy|es|spain|tr|turk|turkey|türk|in|ind|india|pk|pak|nl|pl|pt|gr|ro|al|ru|se|no|dk|fi|be|ch|at|cz|hu|bg|rs|hr|ba|mk|br|mx|latino|latam|ir|iran|af|afg|bd|cn|jp|kr|ph|th|vn|my|id|ku|kurd|kurdish|persian|farsi|hindi|urdu|punjabi|tamil|french|german|italian|spanish|portugal|exyu|ex-yu|balkan|africa|somali|ethiopia)(?=$|[\s|:\[\](){}\-_./])/i;
+  const LANG_OK = { all: () => true, ar: c => c.lang === 'ar', en: c => c.lang === 'en', aren: c => c.lang !== 'other', for: c => c.lang !== 'ar' };
+  const ADULT = /xxx|adult|\b18\+|\+18|for adults|porn|\bsex|playboy|hustler|brazzers|redlight|dorcel|vivid|للكبار|اباحي/i;
+
+  /* ---------------------------------------------------------------- i18n + theme */
+  const EN = () => (S.settings || {}).lang === 'en';
+  const L = (a, e) => EN() ? e : a;
+  const DICT = window.I18N_EN || {};
+  const DKEYS = Object.keys(DICT).sort((a, b) => b.length - a.length);
+  function tr(t) {
+    if (!EN() || !t || !AR_RE.test(t)) return t;
+    const k = t.trim();
+    if (DICT[k]) return t.replace(k, DICT[k]);
+    let o = t;
+    for (const d of DKEYS) if (o.indexOf(d) >= 0) { o = o.split(d).join(DICT[d]); if (!AR_RE.test(o)) break; }
+    return o;
+  }
+  function translate(root) {
+    if (!EN() || !root) return;
+    const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: n => n.parentNode.closest('.nt,script,style') ? 2 : 1 });
+    const nodes = []; let n; while ((n = w.nextNode())) if (AR_RE.test(n.nodeValue)) nodes.push(n);
+    nodes.forEach(x => { x.nodeValue = tr(x.nodeValue); });
+    root.querySelectorAll('[placeholder],[title]').forEach(e => {
+      if (e.placeholder && AR_RE.test(e.placeholder)) e.placeholder = tr(e.placeholder);
+      if (e.title && AR_RE.test(e.title)) e.title = tr(e.title);
+    });
+  }
+  function applyLook() {
+    const st = S.settings || {};
+    document.documentElement.lang = EN() ? 'en' : 'ar';
+    document.documentElement.dir = EN() ? 'ltr' : 'rtl';
+    let th = st.theme || 'dark';
+    if (th === 'auto') { const h = new Date().getHours(); th = h >= 6 && h < 18 ? 'light' : 'dark'; }
+    document.documentElement.dataset.theme = th;
+  }
+  setInterval(() => { if ((S.settings || {}).theme === 'auto') applyLook(); }, 600000);
+
+  /* ---------------------------------------------------------------- state */
+  let S = { sources: [], active: null, cfg: {}, settings: { targetPkg: '', targetLabel: '' } };
+  let CH = [];            // channels of the active source
+  let BYK = new Map();    // key -> channel
+  let GROUPS = [];        // [{name, list}]
+  let ACC = null;         // xtream account info
+  let INFO = {};          // device info from the receiver
+  let MEMO = null;        // package -> members cache
+  const ui = {
+    view: 'subs', hist: [], pk: null, grp: null, q: '', page: 0, move: null, target: 'fav',
+    showRem: false, loading: null, srcTab: 'link', modal: null, editSrc: null, dragKey: null
+  };
+
+  function newCfg() {
+    return {
+      pk: BUILTIN.map(b => ({ id: b.id, ar: b.ar, en: b.en, ic: b.ic, col: b.col, on: DEFAULT_ON.includes(b.id), auto: b.auto !== false, lang: 'all', kw: '', grp: [], add: [], rem: [], ord: [] })),
+      opt: { dup: false, vod: false, adult: true, lang: 'all', nameLang: 'ar', clean: true, logos: true, icons: false, chno: false, fname: 'tiger' },
+      cren: {}
+    };
+  }
+  function cfg() {
+    if (!S.active) return newCfg();
+    if (!S.cfg[S.active]) S.cfg[S.active] = newCfg();
+    return S.cfg[S.active];
+  }
+  const pkById = id => cfg().pk.find(p => p.id === id);
+  const src = () => S.sources.find(s => s.id === S.active);
+  const pkName = pk => {
+    const m = cfg().opt.nameLang, ar = pk.ar || pk.en, en = pk.en || pk.ar;
+    return m === 'en' ? en : m === 'both' ? (ar === en ? ar : ar + ' | ' + en) : ar;
+  };
+
+  let saveT = null;
+  function save() {
+    clearTimeout(saveT);
+    saveT = setTimeout(() => {
+      fetch('/api/state', { method: 'POST', body: JSON.stringify(S) }).catch(() => { });
+    }, 600);
+  }
+  function changed() { MEMO = null; save(); }
+
+  /* ---------------------------------------------------------------- parsing */
+  function parseInf(l) {
+    let inq = false, idx = -1;
+    for (let i = 8; i < l.length; i++) {
+      const ch = l[i];
+      if (ch === '"') inq = !inq;
+      else if (ch === ',' && !inq) { idx = i; break; }
+    }
+    const head = idx < 0 ? l : l.slice(0, idx);
+    const name = idx < 0 ? '' : l.slice(idx + 1).trim();
+    const a = {};
+    head.replace(/([\w-]+)=("([^"]*)"|([^\s"]+))/g, (m, k, _, v1, v2) => { a[k.toLowerCase()] = v1 != null ? v1 : (v2 || ''); return ''; });
+    return { n: name || a['tvg-name'] || '', a };
+  }
+  function parseM3U(text) {
+    const out = [];
+    const lines = text.split(/\r?\n/);
+    let cur = null, grp = null, opts = null;
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i].trim();
+      if (!l) continue;
+      if (l.charCodeAt(0) === 35) {
+        if (l.startsWith('#EXTINF')) { cur = parseInf(l); opts = null; grp = null; }
+        else if (l.startsWith('#EXTGRP:')) grp = l.slice(8).trim();
+        else if (l.startsWith('#EXTVLCOPT') || l.startsWith('#KODIPROP') || l.startsWith('#EXTHTTP')) (opts || (opts = [])).push(l);
+        continue;
+      }
+      if (!/^[a-z]+:\/\//i.test(l) && !cur) continue;
+      const c = cur || { n: '', a: {} };
+      out.push({ n: c.n || decodeURIComponent((l.split('?')[0].split('/').pop() || 'Channel')), a: c.a, u: l, g: c.a['group-title'] || grp || '', o: opts });
+      cur = null; opts = null; grp = null;
+    }
+    return out;
+  }
+  function langOf(c) {
+    if (AR_RE.test(c.n) || AR_RE.test(c.g) || AR_TAG.test(c.g) || AR_TAG.test(c.n) || AR_BRAND.test(c.n)) return 'ar';
+    if (EN_TAG.test(c.g) || EN_TAG.test(c.n)) return 'en';
+    if (OTHER_TAG.test(c.g) || OTHER_TAG.test(c.n)) return 'other';
+    return 'en';
+  }
+  function qualityOf(t) {
+    if (/(^|[^a-z0-9])(4k|uhd|2160p?|8k)([^a-z0-9]|$)|ᵁᴴᴰ|⁴ᴷ/i.test(t)) return 4;
+    if (/fhd|1080|full ?hd|ᶠᴴᴰ/i.test(t)) return 3;
+    if (/(^|[^a-z0-9])(hd|720p?|hevc|h265)([^a-z0-9]|$)|ᴴᴰ/i.test(t)) return 2;
+    return 1;
+  }
+  function typeOf(u) {
+    if (/\/movie\//i.test(u) || /\.(mp4|mkv|avi|mov|wmv)(\?|$)/i.test(u)) return 'movie';
+    if (/\/series\//i.test(u)) return 'series';
+    return 'live';
+  }
+  function setChannels(list) {
+    const dupCount = new Map();
+    BYK = new Map();
+    const gm = new Map();
+    CH = list.map((c, i) => {
+      c.i = i;
+      c.g = (c.g || '').trim() || 'بدون مجموعة';
+      c.n = (c.n || '').trim() || 'Channel';
+      c.l = c.a['tvg-logo'] || c.a.logo || '';
+      c.t = typeOf(c.u);
+      c.txt = c.g + ' ' + c.n;
+      c.lang = langOf(c);
+      c.q = qualityOf(c.n);
+      c.x = ADULT.test(c.txt);
+      let k = c.g + '\u0001' + c.n;
+      const d = dupCount.get(k) || 0;
+      dupCount.set(k, d + 1);
+      if (d) k += '#' + d;
+      c.k = k;
+      BYK.set(k, c);
+      if (!gm.has(c.g)) gm.set(c.g, []);
+      gm.get(c.g).push(c);
+      return c;
+    });
+    GROUPS = [...gm].map(([name, list]) => ({ name, list }));
+    MEMO = null;
+  }
+  function cleanName(n) {
+    let s = n;
+    for (let i = 0; i < 2; i++) {
+      s = s.replace(/^\s*(\|[^|]{1,6}\|\s*|\[[^\]]{1,8}\]\s*|\([A-Z]{2,4}\)\s*|[A-Z]{2,5}\s*[:|•\-–]\s+|[A-Z]{2,5}\s*\|\s*|[A-Z]{2,5}:\s*)/, '');
+    }
+    s = s.replace(/\s{2,}/g, ' ').trim();
+    return s || n;
+  }
+  const dispName = c => cfg().cren[c.k] || (cfg().opt.clean ? cleanName(c.n) : c.n);
+
+  /* ---------------------------------------------------------------- engine */
+  function poolList() {
+    const o = cfg().opt;
+    const ok = LANG_OK[o.lang] || LANG_OK.all;
+    return CH.filter(c => (c.t === 'live' || o.vod) && !(o.adult && c.x) && ok(c));
+  }
+  function baseMatch(pk, c) {
+    if (pk.id === 'fav') return false;
+    let m = false;
+    if (pk.auto !== false) {
+      if (pk.id === 'arabic') m = c.lang === 'ar';
+      else if (pk.id === 'foreign') m = c.lang !== 'ar';
+      else if (RULES[pk.id]) m = RULES[pk.id].test(c.txt) && !(NEG[pk.id] && NEG[pk.id].test(c.txt));
+    }
+    if (!m && pk._kw) m = pk._kw.test(c.txt);
+    if (!m && pk._grp.size) m = pk._grp.has(c.g);
+    if (m && pk.lang && pk.lang !== 'all') m = (LANG_OK[pk.lang] || LANG_OK.all)(c);
+    return m;
+  }
+  function computeAll() {
+    if (MEMO) return MEMO;
+    const C = cfg(), P = poolList(), claimed = new Set();
+    MEMO = new Map();
+    for (const pk of C.pk) {
+      const words = (pk.kw || '').split(/[,،]/).map(s => s.trim()).filter(Boolean);
+      pk._kw = words.length ? new RegExp(words.map(reEsc).join('|'), 'i') : null;
+      pk._grp = new Set(pk.grp || []);
+      const rem = new Set(pk.rem || []);
+      const list = [], inList = new Set();
+      for (const c of P) {
+        if (rem.has(c.k) || !baseMatch(pk, c)) continue;
+        if (!C.opt.dup && claimed.has(c.k)) continue;
+        list.push(c); inList.add(c.k);
+      }
+      for (const k of pk.add || []) {
+        const c = BYK.get(k);
+        if (c && !inList.has(k) && !rem.has(k)) { list.push(c); inList.add(k); }
+      }
+      if (pk.ord && pk.ord.length) {
+        const pos = new Map(pk.ord.map((k, i) => [k, i]));
+        const seq = new Map(list.map((c, i) => [c.k, i]));
+        list.sort((a, b) => (pos.has(a.k) ? pos.get(a.k) : 1e7 + seq.get(a.k)) - (pos.has(b.k) ? pos.get(b.k) : 1e7 + seq.get(b.k)));
+      }
+      MEMO.set(pk.id, list);
+      if (pk.on && pk.id !== 'fav') list.forEach(c => claimed.add(c.k));
+    }
+    return MEMO;
+  }
+  const members = id => computeAll().get(id) || [];
+  function inPk(pk, c) { return members(pk.id).some(x => x.k === c.k); }
+  function addTo(pk, c) {
+    pk.rem = (pk.rem || []).filter(k => k !== c.k);
+    if (!members(pk.id).some(x => x.k === c.k)) pk.add = [...(pk.add || []), c.k];
+    changed();
+  }
+  function removeFrom(pk, c) {
+    if ((pk.add || []).includes(c.k)) pk.add = pk.add.filter(k => k !== c.k);
+    MEMO = null;
+    if (members(pk.id).some(x => x.k === c.k)) pk.rem = [...(pk.rem || []), c.k];
+    pk.ord = (pk.ord || []).filter(k => k !== c.k);
+    changed();
+  }
+  function toggleFav(c) {
+    const f = pkById('fav');
+    if (inPk(f, c)) removeFrom(f, c); else addTo(f, c);
+  }
+
+  function buildM3U() {
+    const C = cfg(), o = C.opt, M = computeAll();
+    const L = ['#EXTM3U'];
+    let n = 0;
+    const q = s => String(s).replace(/"/g, "'");
+    const per = [];
+    for (const pk of C.pk) {
+      if (!pk.on) continue;
+      const list = M.get(pk.id) || [];
+      if (!list.length) continue;
+      const title = (o.icons ? pk.ic + ' ' : '') + pkName(pk);
+      per.push({ pk, count: list.length });
+      for (const c of list) {
+        n++;
+        const nm = dispName(c);
+        let inf = '#EXTINF:-1';
+        if (c.a['tvg-id']) inf += ` tvg-id="${q(c.a['tvg-id'])}"`;
+        inf += ` tvg-name="${q(nm)}"`;
+        if (o.logos && c.l) inf += ` tvg-logo="${q(c.l)}"`;
+        if (o.chno) inf += ` tvg-chno="${n}"`;
+        inf += ` group-title="${q(title)}",${nm}`;
+        L.push(inf);
+        if (c.o) L.push(...c.o);
+        L.push(c.u);
+      }
+    }
+    return { text: L.join('\n') + '\n', count: n, per };
+  }
+
+  /* ---------------------------------------------------------------- sources */
+  function detectLink(raw) {
+    const s = raw.trim();
+    let u;
+    try { u = new URL(s); } catch (e) { return null; }
+    const user = u.searchParams.get('username'), pass = u.searchParams.get('password');
+    if (user && pass && /(get|player_api|xmltv)\.php$/i.test(u.pathname)) {
+      const base = u.origin + u.pathname.replace(/\/[^/]*$/, '');
+      return { type: 'xtream', server: base, user, pass, output: u.searchParams.get('output') || 'ts' };
+    }
+    const m = u.pathname.match(/^\/(?:live\/)?([^/]+)\/([^/]+)\/?$/);
+    if (m && !/\.(m3u8?|txt)$/i.test(m[2]) && /^\d+$/.test(u.port || '80') && !u.search && u.port) {
+      return { type: 'xtream', server: u.origin, user: m[1], pass: m[2], output: 'ts' };
+    }
+    return { type: 'url', url: s };
+  }
+  function xtBase(s) { return s.server.replace(/\/+$/, ''); }
+  function apiUrl(s, action) {
+    return xtBase(s) + '/player_api.php?username=' + enc(s.user) + '&password=' + enc(s.pass) + (action ? '&action=' + action : '');
+  }
+  function m3uUrl(s) {
+    if (s.type === 'url') return s.url;
+    return xtBase(s) + '/get.php?username=' + enc(s.user) + '&password=' + enc(s.pass) + '&type=m3u_plus&output=' + (s.output || 'ts');
+  }
+  async function readText(res, label) {
+    const total = +(res.headers.get('X-Length') || 0);
+    if (!res.body || !res.body.getReader) return await res.text();
+    const rd = res.body.getReader(); const parts = []; let got = 0;
+    for (; ;) {
+      const { done, value } = await rd.read();
+      if (done) break;
+      parts.push(value); got += value.length;
+      setLoading(label + ' ' + fmtMB(got), total > 0 ? got / total : null);
+    }
+    const all = new Uint8Array(got); let o = 0;
+    for (const p of parts) { all.set(p, o); o += p.length; }
+    return new TextDecoder('utf-8').decode(all);
+  }
+  async function getJSON(url) {
+    const r = await fetch('/api/fetch?url=' + enc(url));
+    if (!r.ok) throw new Error(await r.text());
+    const t = await r.text();
+    try { return JSON.parse(t); } catch (e) { throw new Error('رد غير متوقع من السيرفر'); }
+  }
+  async function checkAccount(s) {
+    ACC = null;
+    if (s.type !== 'xtream') return null;
+    try {
+      const j = await getJSON(apiUrl(s));
+      if (j && j.user_info) { ACC = j.user_info; ACC.server = j.server_info || {}; }
+      else if (j && j.user_info === undefined) ACC = { auth: 0 };
+    } catch (e) { ACC = { error: e.message }; }
+    return ACC;
+  }
+  async function xtreamLive(s) {
+    setLoading('جلب التصنيفات…', null);
+    const cats = await getJSON(apiUrl(s, 'get_live_categories'));
+    setLoading('جلب القنوات المباشرة…', null);
+    const streams = await getJSON(apiUrl(s, 'get_live_streams'));
+    if (!Array.isArray(streams) || !streams.length) throw new Error('لا توجد قنوات');
+    const cm = new Map(), corder = new Map();
+    (Array.isArray(cats) ? cats : []).forEach((c, i) => { cm.set(String(c.category_id), c.category_name); corder.set(String(c.category_id), i); });
+    const ext = s.output === 'm3u8' ? 'm3u8' : 'ts';
+    streams.sort((a, b) => ((corder.get(String(a.category_id)) || 0) - (corder.get(String(b.category_id)) || 0)) || ((+a.num || 0) - (+b.num || 0)));
+    return streams.map(x => ({
+      n: x.name || '', g: cm.get(String(x.category_id)) || '',
+      a: { 'tvg-id': x.epg_channel_id || '', 'tvg-logo': x.stream_icon || '' },
+      u: xtBase(s) + '/live/' + enc(s.user) + '/' + enc(s.pass) + '/' + x.stream_id + '.' + ext
+    }));
+  }
+  async function loadSource(s, fromCache) {
+    S.active = s.id; save();
+    ui.loading = { text: 'جاري الاتصال…', pct: null }; render();
+    try {
+      let list = null;
+      if (fromCache || s.type === 'file') {
+        const r = await fetch('/api/cache?id=' + enc(s.id));
+        if (r.ok) list = parseM3U(await readText(r, 'قراءة الملف'));
+        else if (s.type === 'file') throw new Error('الملف غير موجود، أعد استيراده');
+      }
+      if (!list || !list.length) {
+        if (s.type === 'xtream') {
+          checkAccount(s).then(render);
+          const o = cfg().opt;
+          if (!o.vod) { try { list = await xtreamLive(s); } catch (e) { list = null; } }
+        }
+        if (!list || !list.length) {
+          const r = await fetch('/api/fetch?cache=' + enc(s.id) + '&url=' + enc(m3uUrl(s)));
+          if (!r.ok) throw new Error(await r.text());
+          const txt = await readText(r, 'تحميل القائمة');
+          setLoading('تحليل القنوات…', 1);
+          await new Promise(r => setTimeout(r, 30));
+          if (!/#EXTINF/i.test(txt.slice(0, 200000))) {
+            if (/^\s*[{[]/.test(txt)) throw new Error('الرابط يرجع بيانات وليس قائمة M3U');
+            throw new Error('الرابط لا يحتوي على قائمة قنوات M3U صالحة');
+          }
+          list = parseM3U(txt);
+        }
+      } else if (s.type === 'xtream') checkAccount(s).then(render);
+      setChannels(list);
+      s.count = CH.length; s.updated = Date.now();
+      save();
+      ui.loading = null;
+      toast(L('تم جلب ' + fmtN(CH.length) + ' قناة ✓', fmtN(CH.length) + ' channels loaded ✓'), 'ok');
+      go('packs');
+      if (!cfg().opt.asked) onboard();
+    } catch (e) {
+      ui.loading = null;
+      CH = []; GROUPS = []; MEMO = null;
+      render();
+      modal(`<h2>تعذر جلب القنوات</h2><p class="mut">${esc(e.message || e)}</p>
+        <ul class="hint-list"><li>تأكد من صحة الرابط واسم المستخدم وكلمة المرور.</li><li>تأكد أن الاشتراك فعّال وغير منتهي.</li><li>جرّب نوع الإخراج m3u8 بدل ts.</li></ul>
+        <div class="bar end"><button class="btn pri f" data-act="closeModal">حسناً</button></div>`);
+    }
+  }
+  function setLoading(text, pct) {
+    ui.loading = { text, pct };
+    const el = $('#ld-text'); if (el) el.textContent = text;
+    const p = $('#ld-bar');
+    if (p) { p.parentNode.classList.toggle('ind', pct == null); p.style.width = pct == null ? '' : Math.round(pct * 100) + '%'; }
+  }
+
+  /* ---------------------------------------------------------------- navigation */
+  function go(view, params, push) {
+    if (push !== false && ui.view !== view) ui.hist.push({ view: ui.view, pk: ui.pk, grp: ui.grp, page: ui.page, q: ui.q });
+    if (ui.hist.length > 30) ui.hist.shift();
+    ui.view = view; ui.page = 0; ui.q = ''; ui.move = null; ui.showRem = false;
+    Object.assign(ui, params || {});
+    render(true);
+  }
+  window.appBack = function () {
+    if (ui.modal) { closeModal(); return true; }
+    if (ui.move) { ui.move = null; render(); return true; }
+    const h = ui.hist.pop();
+    if (h) { ui.view = h.view; ui.pk = h.pk; ui.grp = h.grp; ui.page = h.page; ui.q = h.q; render(true); return true; }
+    if (ui.view !== 'packs' && CH.length) { go('packs', null, false); return true; }
+    return false;
+  };
+  window.remoteKey = function (k) {
+    if (k === 'pageup' || k === 'pagedown') {
+      const d = k === 'pagedown' ? 1 : -1;
+      if (ui.move) moveBy(d * 10); else { const pg = $('[data-act="page"][data-arg="' + (ui.page + d) + '"]'); if (pg) pg.click(); }
+    } else if (k === 'menu') { const n = $('.nav.cur') || $('.nav'); n && n.focus(); }
+  };
+  window.onAppResume = function () { refreshInfo(); };
+
+  /* spatial navigation for the remote */
+  function focusables() {
+    const root = ui.modal ? $('#modal') : document;
+    return [...root.querySelectorAll('.f')].filter(e => !e.disabled && e.offsetParent !== null);
+  }
+  function nav(dir) {
+    const cur = document.activeElement, list = focusables();
+    if (!list.length) return;
+    if (!cur || cur === document.body || !list.includes(cur)) { (list.find(e => e.classList.contains('auto')) || list[0]).focus(); return; }
+    const r = cur.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    let best = null, bs = Infinity;
+    for (const e of list) {
+      if (e === cur) continue;
+      const q = e.getBoundingClientRect(), x = q.left + q.width / 2, y = q.top + q.height / 2;
+      let main, side;
+      if (dir === 'down') { if (q.top < r.bottom - 4 && y <= cy + 2) continue; main = y - cy; side = Math.abs(x - cx); if (main <= 0) continue; }
+      else if (dir === 'up') { if (q.bottom > r.top + 4 && y >= cy - 2) continue; main = cy - y; side = Math.abs(x - cx); if (main <= 0) continue; }
+      else if (dir === 'right') { if (x <= cx + 2) continue; main = x - cx; side = Math.abs(y - cy); if (side > Math.max(r.height, q.height) * 1.5 && main < 40) continue; }
+      else { if (x >= cx - 2) continue; main = cx - x; side = Math.abs(y - cy); if (side > Math.max(r.height, q.height) * 1.5 && main < 40) continue; }
+      const sc = main + side * (dir === 'up' || dir === 'down' ? 0.6 : 2.2);
+      if (sc < bs) { bs = sc; best = e; }
+    }
+    if (best) { best.focus({ preventScroll: true }); best.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }
+    else if ((dir === 'down' || dir === 'up') && !ui.modal) {
+      const pg = $('[data-act="page"][data-arg="' + (ui.page + (dir === 'down' ? 1 : -1)) + '"]');
+      if (pg) { pg.click(); }
+    }
+  }
+  document.addEventListener('keydown', e => {
+    const k = e.key, ae = document.activeElement;
+    const typing = ae && ((ae.tagName === 'INPUT' && !['checkbox', 'button', 'file'].includes(ae.type)) || ae.tagName === 'TEXTAREA');
+    if (ui.move) {
+      if (k === 'ArrowUp' || k === 'ArrowDown') { e.preventDefault(); moveBy(k === 'ArrowDown' ? 1 : -1); return; }
+      if (k === 'PageUp' || k === 'PageDown') { e.preventDefault(); moveBy(k === 'PageDown' ? 10 : -10); return; }
+      if (k === 'Enter' || k === 'Escape') { e.preventDefault(); ui.move = null; render(); toast('تم تثبيت الموضع ✓', 'ok'); return; }
+    }
+    const dirs = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' };
+    if (dirs[k]) {
+      if (typing && (k === 'ArrowLeft' || k === 'ArrowRight') && ae.value) return;
+      e.preventDefault(); nav(dirs[k]); return;
+    }
+    if (k === 'Enter' && ae && ae.classList.contains('f') && ae.tagName !== 'BUTTON' && ae.tagName !== 'INPUT') { e.preventDefault(); ae.click(); return; }
+    if (k === 'Escape' || (k === 'Backspace' && !typing)) { e.preventDefault(); window.appBack(); return; }
+    if (k === 'PageDown' || k === 'PageUp') { e.preventDefault(); window.remoteKey(k.toLowerCase()); }
+  });
+
+  /* ---------------------------------------------------------------- moving */
+  function currentOrderList() {
+    if (ui.move.kind === 'pk') return cfg().pk;
+    return members(ui.move.pk);
+  }
+  function moveBy(d) {
+    const m = ui.move; if (!m) return;
+    if (m.kind === 'pk') {
+      const arr = cfg().pk, i = arr.findIndex(p => p.id === m.key), j = Math.max(0, Math.min(arr.length - 1, i + d));
+      if (i < 0 || i === j) return;
+      const [x] = arr.splice(i, 1); arr.splice(j, 0, x);
+      changed(); render(); return;
+    }
+    const pk = pkById(m.pk), list = members(pk.id).map(c => c.k);
+    const i = list.indexOf(m.key), j = Math.max(0, Math.min(list.length - 1, i + d));
+    if (i < 0 || i === j) return;
+    list.splice(i, 1); list.splice(j, 0, m.key);
+    pk.ord = list; changed();
+    ui.page = Math.floor(j / PAGE);
+    render();
+  }
+  function moveTo(pk, key, pos) {
+    const list = members(pk.id).map(c => c.k);
+    const i = list.indexOf(key); if (i < 0) return;
+    list.splice(i, 1); list.splice(Math.max(0, Math.min(list.length, pos)), 0, key);
+    pk.ord = list; changed();
+  }
+
+  /* ---------------------------------------------------------------- render */
+  let lastFid = null;
+  function render(resetFocus) {
+    const ae = document.activeElement;
+    lastFid = !resetFocus && ae && ae.dataset ? ae.dataset.fid : null;
+    document.querySelectorAll('.nav').forEach(b => b.classList.toggle('cur', b.dataset.arg === navOf(ui.view)));
+    renderSide();
+    $('#top').innerHTML = topHtml();
+    $('#main').innerHTML = ui.loading ? loadingHtml() : (VIEWS[ui.view] || VIEWS.subs)();
+    $('#keys').innerHTML = keysHtml();
+    applyLook();
+    if (EN()) { translate($('#side')); translate($('#top')); translate($('#main')); translate($('#keys')); }
+    if (resetFocus) $('#main').scrollTop = 0;
+    restoreFocus(resetFocus);
+  }
+  function navOf(v) { return { pack: 'packs', group: 'browse' }[v] || v; }
+  function restoreFocus(reset) {
+    if (ui.modal) return;
+    let el = null;
+    if (lastFid) el = [...document.querySelectorAll('[data-fid]')].find(e => e.dataset.fid === lastFid);
+    if (!el && reset) el = $('#main .auto') || $('#main .f');
+    if (!el) { const a = document.activeElement; if (!a || a === document.body || !document.contains(a)) el = $('#main .auto') || $('#main .f') || $('.nav.cur'); }
+    if (el) { el.focus({ preventScroll: true }); if (ui.move || reset) el.scrollIntoView({ block: 'nearest' }); }
+  }
+  function renderSide() {
+    const ip = (INFO.ips || [])[0];
+    $('#sideinfo').innerHTML = `<button class="btn sm f themebtn" data-act="themeToggle" data-fid="theme" title="تبديل المظهر">${document.documentElement.dataset.theme === 'light' ? '🌙 ليلي' : '☀️ نهاري'}</button>` + (ip && INFO.port ? `<div class="pc">💻 تحكم من الكمبيوتر<b class="ltr">http://${esc(ip)}:${INFO.port}</b></div>` : '') +
+      `<div class="ver">M3U v${esc(INFO.version || '1.0')}</div>`;
+  }
+  function topHtml() {
+    const s = src();
+    const titles = { subs: 'الاشتراكات', packs: 'الباقات', pack: '', browse: 'تصفح قنوات المزود', group: '', export: 'إرسال إلى الرسيفر', settings: 'الإعدادات', favs: 'المفضلة' };
+    let t = titles[ui.view];
+    if (ui.view === 'pack') { const pk = pkById(ui.pk); t = pk ? `<span class="pkdot" style="${cv(pk.col)}">${pk.ic}</span> <span class="nt">${esc(pkName(pk))}</span>` : ''; }
+    if (ui.view === 'group') t = '<span class="nt">🗂️ ' + esc(ui.grp) + '</span>';
+    let chips = '';
+    if (s) chips += `<span class="chip nt"><i>📡</i>${esc(s.name)}</span>`;
+    if (CH.length) chips += `<span class="chip"><i>📺</i>${fmtN(CH.length)} قناة</span>`;
+    if (ACC) {
+      if (ACC.error || ACC.auth === 0) chips += `<span class="chip bad">⚠ تعذر فحص الحساب</span>`;
+      else {
+        const st = String(ACC.status || '').toLowerCase();
+        const exp = ACC.exp_date ? new Date(ACC.exp_date * 1000) : null;
+        const days = exp ? Math.ceil((exp - Date.now()) / 864e5) : null;
+        chips += `<span class="chip ${st === 'active' ? 'ok' : 'bad'}">${st === 'active' ? '● فعّال' : '● ' + esc(ACC.status || 'غير معروف')}</span>`;
+        if (exp) chips += `<span class="chip ${days < 7 ? 'warn' : ''}">⏳ ${days > 0 ? L('باقي ' + days + ' يوم', days + ' days left') : L('منتهي', 'Expired')}</span>`;
+        if (ACC.max_connections) chips += `<span class="chip">🔗 ${esc(ACC.active_cons || 0)}/${esc(ACC.max_connections)}</span>`;
+      }
+    }
+    return `<h1>${t}</h1><div class="chips">${chips}</div>`;
+  }
+  function keysHtml() {
+    if (ui.move) return `<span><b>▲▼</b> تحريك</span><span><b>CH±</b> تحريك 10</span><span><b>OK</b> تثبيت</span><span><b>رجوع</b> إلغاء</span>`;
+    return `<span><b>▲▼◀▶</b> تنقل</span><span><b>OK</b> اختيار</span><span><b>CH±</b> صفحة</span><span><b>رجوع</b> للخلف</span><span><b>Menu</b> القائمة</span>`;
+  }
+  function loadingHtml() {
+    const l = ui.loading;
+    return `<div class="loading"><div class="spin"></div><h2 id="ld-text">${esc(l.text)}</h2>
+      <div class="prog ${l.pct == null ? 'ind' : ''}"><i id="ld-bar" style="${l.pct == null ? '' : 'width:' + Math.round(l.pct * 100) + '%'}"></i></div>
+      <p class="mut">القوائم الكبيرة (+10,000 قناة) قد تأخذ دقيقة</p></div>`;
+  }
+  function pager(total) {
+    const pages = Math.ceil(total / PAGE);
+    if (pages <= 1) return '';
+    const p = ui.page;
+    return `<div class="pager">
+      <button class="btn sm f" data-act="page" data-arg="${p - 1}" ${p <= 0 ? 'disabled' : ''} data-fid="pg-prev">› السابق</button>
+      <span class="mut">${L('صفحة ' + (p + 1) + ' من ' + pages, 'Page ' + (p + 1) + ' of ' + pages)}</span>
+      <button class="btn sm f" data-act="page" data-arg="${p + 1}" ${p >= pages - 1 ? 'disabled' : ''} data-fid="pg-next">التالي ‹</button></div>`;
+  }
+  function needSource() {
+    return `<div class="empty"><div class="big">📡</div><h2>لا توجد قنوات بعد</h2><p class="mut">أضف رابط اشتراكك أو ملف M3U للبدء</p>
+      <button class="btn pri f auto" data-act="go" data-arg="subs">إضافة اشتراك</button></div>`;
+  }
+  const qTag = q => q === 4 ? '<span class="tag q4">4K</span>' : q === 3 ? '<span class="tag q3">FHD</span>' : q === 2 ? '<span class="tag q2">HD</span>' : '';
+  const logo = c => `<span class="logo">${c.l ? `<img loading="lazy" src="${esc(c.l)}" onerror="this.remove()">` : ''}<b>${esc(dispName(c).slice(0, 2))}</b></span>`;
+
+  /* ---------------------------------------------------------------- views */
+  const VIEWS = {};
+
+  VIEWS.subs = function () {
+    const t = ui.srcTab, e = ui.editSrc || {};
+    const tabs = [['link', '🔗 رابط اشتراك'], ['xtream', '🔑 Xtream'], ['file', '📁 ملف M3U']]
+      .map(([k, l]) => `<button class="tab f ${t === k ? 'on' : ''}" data-act="srcTab" data-arg="${k}" data-fid="tab-${k}">${l}</button>`).join('');
+    let form = '';
+    if (t === 'link') form = `
+      <label class="fl">رابط الاشتراك (M3U أو رابط get.php)</label>
+      <input class="in f auto" id="f-url" data-fid="f-url" placeholder="http://server:port/get.php?username=…&password=…" value="${esc(e.url || '')}">
+      <div class="hint">يتعرّف التطبيق تلقائياً على نوع الرابط ويفحص حالة الاشتراك.</div>`;
+    else if (t === 'xtream') form = `
+      <label class="fl">عنوان السيرفر</label><input class="in f auto" id="f-server" data-fid="f-server" placeholder="http://server.com:8080" value="${esc(e.server || '')}">
+      <div class="grid2"><div><label class="fl">اسم المستخدم</label><input class="in f" id="f-user" data-fid="f-user" value="${esc(e.user || '')}"></div>
+      <div><label class="fl">كلمة المرور</label><input class="in f" id="f-pass" data-fid="f-pass" value="${esc(e.pass || '')}"></div></div>
+      <label class="fl">نوع البث</label><div class="seg">${['ts', 'm3u8'].map(o => `<button class="btn sm f ${(e.output || 'ts') === o ? 'on' : ''}" data-act="xtOut" data-arg="${o}" data-fid="xo-${o}">${o.toUpperCase()}</button>`).join('')}</div>`;
+    else form = `
+      <div class="filebox">
+        <button class="btn f auto" data-act="pickDevice" data-fid="pick-dev">📂 اختيار من ذاكرة الرسيفر / USB</button>
+        ${IS_TV ? '' : `<label class="btn f" tabindex="0" data-fid="pick-pc">💻 رفع من الكمبيوتر<input type="file" id="f-file" accept=".m3u,.m3u8,.txt" hidden></label>`}
+      </div><div class="hint">يبحث التطبيق عن ملفات .m3u في الذاكرة الداخلية وفلاش USB.</div>`;
+    const list = S.sources.map((s, i) => {
+      const cur = s.id === S.active;
+      const ty = s.type === 'xtream' ? 'Xtream' : s.type === 'file' ? 'ملف' : 'رابط';
+      return `<div class="src ${cur ? 'cur' : ''}">
+        <div class="src-ic">${s.type === 'file' ? '📁' : s.type === 'xtream' ? '🔑' : '🔗'}</div>
+        <div class="nm"><b class="nt">${esc(s.name)}</b><small>${ty}${s.count ? ' · ' + fmtN(s.count) + ' قناة' : ''}${s.updated ? ' · ' + new Date(s.updated).toLocaleDateString('ar-SA-u-nu-latn') : ''}</small></div>
+        ${cur && CH.length ? '<span class="chip ok">● نشط</span>' : ''}
+        <button class="btn sm pri f" data-act="srcLoad" data-arg="${i}" data-fid="sl-${s.id}">${s.type === 'file' ? 'فتح' : 'تحديث ⟳'}</button>
+        ${s.count && s.type !== 'file' ? `<button class="btn sm f" data-act="srcCache" data-arg="${i}" data-fid="sc-${s.id}">فتح سريع</button>` : ''}
+        <button class="btn sm danger f" data-act="srcDel" data-arg="${i}" data-fid="sd-${s.id}">حذف</button></div>`;
+    }).join('');
+    return `<div class="hero"><img src="icon.png" alt=""><div><h2>أضف اشتراكك وخلّ الباقي علينا</h2>
+      <p>يجلب القنوات ويصنّفها تلقائياً في باقات (رياضة، أخبار، أفلام، 4K…)، ثم يرسلها مرتبة إلى IP Channels.</p></div></div>
+      <div class="card"><div class="tabs">${tabs}</div>
+      <label class="fl">اسم الاشتراك (اختياري)</label><input class="in rtl f" id="f-name" data-fid="f-name" placeholder="مثال: اشتراكي الأساسي" value="${esc(e.name || '')}">
+      ${form}
+      ${t !== 'file' ? `<div class="bar end"><button class="btn pri big f" data-act="srcAdd" data-fid="src-add">🔍 فحص وجلب القنوات</button></div>` : ''}</div>
+      ${S.sources.length ? `<h3 class="sec">اشتراكاتك المحفوظة</h3><div class="list">${list}</div>` : ''}`;
+  };
+
+  VIEWS.packs = function () {
+    if (!CH.length) return needSource();
+    const C = cfg(), o = C.opt, M = computeAll();
+    let total = 0;
+    C.pk.forEach(p => { if (p.on) total += (M.get(p.id) || []).length; });
+    const nameSeg = [['ar', 'عربي'], ['en', 'English'], ['both', 'عربي + English']]
+      .map(([k, l]) => `<button class="btn sm f ${o.nameLang === k ? 'on' : ''}" data-act="optSet" data-arg="nameLang:${k}" data-fid="on-${k}">${l}</button>`).join('');
+    const tiles = C.pk.map((p, i) => {
+      const n = (M.get(p.id) || []).length;
+      const mv = ui.move && ui.move.kind === 'pk' && ui.move.key === p.id;
+      return `<div class="tile ${p.on ? 'on' : 'off'} ${mv ? 'moving' : ''}" style="${cv(p.col)}" draggable="${!IS_TV}" data-drag="pk:${p.id}">
+        <button class="tile-main f ${i === 0 ? 'auto' : ''}" data-act="pkOpen" data-arg="${p.id}" data-fid="pk-${p.id}">
+          <span class="tile-ic">${p.ic}</span><span class="tile-nm nt">${esc(pkName(p))}</span>
+          <span class="tile-n">${fmtN(n)} <small>قناة</small></span></button>
+        <div class="tile-acts">
+          <button class="sw f ${p.on ? 'on' : ''}" data-act="pkToggle" data-arg="${p.id}" data-fid="pt-${p.id}" title="تفعيل"><i></i></button>
+          <button class="ib f" data-act="pkMove" data-arg="${p.id}" data-fid="pm-${p.id}" title="ترتيب">⇅</button>
+          <button class="ib f" data-act="pkEdit" data-arg="${p.id}" data-fid="pe-${p.id}" title="إعدادات">✎</button>
+        </div></div>`;
+    }).join('');
+    return `<div class="summary">
+        <div class="stat"><b>${fmtN(C.pk.filter(p => p.on).length)}</b><span>باقة مفعّلة</span></div>
+        <div class="stat"><b>${fmtN(total)}</b><span>قناة في القائمة النهائية</span></div>
+        <div class="stat"><b>${fmtN(CH.length)}</b><span>قناة عند المزود</span></div>
+        <button class="btn pri big f" data-act="go" data-arg="export" data-fid="go-export">🚀 إرسال إلى الرسيفر</button></div>
+      <div class="card opts">
+        <div class="opt wide"><span>أسماء الباقات</span><div class="seg">${nameSeg}</div></div>
+        <div class="opt"><span>القناة في أكثر من باقة</span><button class="sw f ${o.dup ? 'on' : ''}" data-act="optTog" data-arg="dup" data-fid="o-dup"><i></i></button></div>
+        <div class="opt"><span>إخفاء محتوى البالغين</span><button class="sw f ${o.adult ? 'on' : ''}" data-act="optTog" data-arg="adult" data-fid="o-adult"><i></i></button></div>
+      </div>
+      ${ui.move ? '<div class="movebar">⇅ وضع الترتيب: استخدم ⬆⬇ لتحريك الباقة ثم OK للتثبيت</div>' : ''}
+      <div class="tiles">${tiles}
+        <button class="tile add f" data-act="pkNew" data-fid="pk-new"><span class="tile-ic">＋</span><span class="tile-nm">باقة جديدة</span></button></div>`;
+  };
+
+  function chRow(c, idx, mode, pk) {
+    const fav = inPk(pkById('fav'), c);
+    const mv = ui.move && ui.move.key === c.k;
+    const fid = 'r-' + c.i;
+    let acts = '';
+    if (mode === 'pack') {
+      acts = `<button class="ib f" data-act="chMove" data-arg="${c.i}" data-fid="${fid}-m" title="تحريك">⇅</button>
+        ${pk.id !== 'fav' ? `<button class="ib star f ${fav ? 'on' : ''}" data-act="chFav" data-arg="${c.i}" data-fid="${fid}-f">★</button>` : ''}
+        <button class="ib f" data-act="chMenu" data-arg="${c.i}" data-fid="${fid}-o" title="خيارات">⋯</button>
+        <button class="ib del f" data-act="chRemove" data-arg="${c.i}" data-fid="${fid}-x" title="حذف من الباقة">✕</button>`;
+    } else if (mode === 'removed') {
+      acts = `<button class="btn sm f" data-act="chRestore" data-arg="${c.i}" data-fid="${fid}-rs">↩ إرجاع</button>`;
+    } else {
+      const tp = pkById(ui.target) || pkById('fav');
+      const on = inPk(tp, c);
+      acts = `<button class="ib star f ${fav ? 'on' : ''}" data-act="chFav" data-arg="${c.i}" data-fid="${fid}-f">★</button>
+        <button class="ib f" data-act="chMenu" data-arg="${c.i}" data-fid="${fid}-o">⋯</button>
+        <button class="addbtn f ${on ? 'on' : ''}" data-act="chTarget" data-arg="${c.i}" data-fid="${fid}-t" style="${cv(tp.col)}">${on ? '✓ في ' : '＋ '}${esc(pkName(tp))}</button>`;
+    }
+    const main = mode === 'pack'
+      ? `<button class="rowmain f" data-act="chMove" data-arg="${c.i}" data-fid="${fid}">`
+      : `<button class="rowmain f" data-act="chMenu" data-arg="${c.i}" data-fid="${fid}">`;
+    return `<div class="row ${mv ? 'moving' : ''}" draggable="${mode === 'pack' && !IS_TV && !ui.q}" data-drag="ch:${c.i}">
+      <span class="num">${idx + 1}</span>${main}${logo(c)}
+      <span class="nm nt"><b>${esc(dispName(c))}</b>${qTag(c.q)}<small>${esc(c.g)}</small></span></button>${acts}</div>`;
+  }
+
+  VIEWS.pack = function () {
+    if (!CH.length) return needSource();
+    const pk = pkById(ui.pk); if (!pk) return '';
+    let list = ui.showRem ? (pk.rem || []).map(k => BYK.get(k)).filter(Boolean) : members(pk.id);
+    const all = list.length;
+    if (ui.q) { const q = ui.q.toLowerCase(); list = list.filter(c => dispName(c).toLowerCase().includes(q) || c.g.toLowerCase().includes(q)); }
+    const start = ui.page * PAGE, page = list.slice(start, start + PAGE);
+    const remN = (pk.rem || []).length;
+    const rows = page.map((c, i) => chRow(c, start + i, ui.showRem ? 'removed' : 'pack', pk)).join('');
+    return `<div class="pkhead" style="${cv(pk.col)}">
+        <div class="pkinfo"><span class="big-ic">${pk.ic}</span><div><b>${fmtN(all)}</b> قناة ${pk.on ? '<span class="chip ok">مفعّلة</span>' : '<span class="chip">غير مفعّلة</span>'}</div></div>
+        <div class="bar">
+          <button class="sw f ${pk.on ? 'on' : ''}" data-act="pkToggle" data-arg="${pk.id}" data-fid="ph-on"><i></i></button>
+          <button class="btn f" data-act="pkAddCh" data-arg="${pk.id}" data-fid="ph-add">＋ إضافة قنوات</button>
+          <button class="btn f" data-act="pkSort" data-arg="${pk.id}" data-fid="ph-sort">⇅ ترتيب تلقائي</button>
+          <button class="btn f" data-act="pkProbe" data-arg="${pk.id}" data-fid="ph-probe">🩺 فحص القنوات</button>
+          <button class="btn f" data-act="pkEdit" data-arg="${pk.id}" data-fid="ph-edit">✎ الإعدادات</button>
+        </div></div>
+      <div class="bar">
+        <input class="in rtl search f auto" data-inp="q" data-fid="q" placeholder="🔍 بحث داخل الباقة…" value="${esc(ui.q)}">
+        ${remN ? `<button class="btn sm f ${ui.showRem ? 'on' : ''}" data-act="showRem" data-fid="ph-rem">🗑 المحذوفة (${remN})</button>` : ''}
+      </div>
+      ${ui.move ? '<div class="movebar">⇅ وضع الترتيب: ⬆⬇ لتحريك القناة · CH± لتحريك 10 · OK للتثبيت</div>' : `<div class="hint top">اضغط <b>OK</b> على أي قناة لتحريكها بالأسهم${IS_TV ? '' : '، أو اسحبها بالماوس'}</div>`}
+      <div class="list">${rows || `<div class="empty"><div class="big">${pk.ic}</div><p>لا توجد قنوات في هذه الباقة</p><button class="btn pri f" data-act="pkAddCh" data-arg="${pk.id}">＋ إضافة قنوات</button></div>`}</div>
+      ${pager(list.length)}`;
+  };
+
+  VIEWS.favs = function () { ui.pk = 'fav'; return VIEWS.pack(); };
+
+  VIEWS.browse = function () {
+    if (!CH.length) return needSource();
+    let groups = GROUPS;
+    const o = cfg().opt;
+    if (ui.q) {
+      const q = ui.q.toLowerCase();
+      const chs = CH.filter(c => c.n.toLowerCase().includes(q) || c.g.toLowerCase().includes(q));
+      const start = ui.page * PAGE;
+      return browseHead() + `<p class="mut">${fmtN(chs.length)} ${L('نتيجة', 'results')}</p><div class="list">${chs.slice(start, start + PAGE).map((c, i) => chRow(c, start + i, 'browse')).join('')}</div>` + pager(chs.length);
+    }
+    const start = ui.page * PAGE;
+    const rows = groups.slice(start, start + PAGE).map((g, i) => {
+      const live = g.list.filter(c => c.t === 'live').length;
+      return `<div class="row"><button class="rowmain f ${i === 0 ? 'auto' : ''}" data-act="grpOpen" data-arg="${start + i}" data-fid="g-${start + i}">
+        <span class="gic">🗂️</span><span class="nm"><b class="nt">${esc(g.name)}</b><small>${fmtN(g.list.length)} قناة${live !== g.list.length ? ' · ' + fmtN(live) + ' مباشر' : ''}</small></span></button>
+        <button class="btn sm f" data-act="grpToPk" data-arg="${start + i}" data-fid="g-${start + i}-p">＋ إلى باقة</button></div>`;
+    }).join('');
+    return browseHead() + `<div class="list">${rows}</div>` + pager(groups.length);
+  };
+  function browseHead() {
+    const tp = pkById(ui.target) || pkById('fav');
+    return `<div class="bar"><input class="in rtl search f ${ui.q ? 'auto' : ''}" data-inp="q" data-fid="q" placeholder="🔍 ابحث في كل القنوات…" value="${esc(ui.q)}">
+      <button class="btn f target" style="${cv(tp.col)}" data-act="pickTarget" data-fid="tgt">الإضافة إلى: <b class="nt">${tp.ic} ${esc(pkName(tp))}</b> ▾</button></div>`;
+  }
+
+  VIEWS.group = function () {
+    const g = GROUPS.find(x => x.name === ui.grp); if (!g) return '';
+    let list = g.list;
+    if (ui.q) { const q = ui.q.toLowerCase(); list = list.filter(c => c.n.toLowerCase().includes(q)); }
+    const start = ui.page * PAGE;
+    return browseHead().replace('ابحث في كل القنوات', 'بحث في المجموعة') +
+      `<div class="bar"><button class="btn f" data-act="grpAll" data-fid="ga-all">＋ إضافة كل المجموعة للباقة</button>
+       <button class="btn f" data-act="grpNewPk" data-fid="ga-new">✨ باقة جديدة من هذه المجموعة</button></div>
+       <div class="list">${list.slice(start, start + PAGE).map((c, i) => chRow(c, start + i, 'browse')).join('')}</div>` + pager(list.length);
+  };
+
+  VIEWS.export = function () {
+    if (!CH.length) return needSource();
+    const C = cfg(), o = C.opt, b = buildM3U();
+    const sz = new Blob([b.text]).size;
+    const rows = b.per.map(x => `<div class="erow" style="${cv(x.pk.col)}"><span class="nt">${x.pk.ic} ${esc(pkName(x.pk))}</span><b>${fmtN(x.count)}</b></div>`).join('');
+    const tg = (k, l) => `<div class="opt"><span>${l}</span><button class="sw f ${o[k] ? 'on' : ''}" data-act="optTog" data-arg="${k}" data-fid="ex-${k}"><i></i></button></div>`;
+    const ip = (INFO.ips || [])[0];
+    const res = ui.exportRes;
+    const result = res ? `<div class="result"><h3 class="ok">✓ ${L('تم الحفظ (' + fmtN(res.count) + ' قناة)', 'Saved (' + fmtN(res.count) + ' channels)')}</h3>
+        ${res.saved.map(p => `<div class="path">📁 <span class="ltr">${esc(p)}</span></div>`).join('')}
+        ${res.failed.length ? `<div class="path mut small">تعذر الحفظ في ${res.failed.length} موقع (غالباً لا يوجد فلاش USB)</div>` : ''}
+        <div class="path">🌐 رابط مباشر: <span class="code">http://127.0.0.1:${INFO.port}/tiger.m3u</span>${ip ? ` <span class="code">http://${esc(ip)}:${INFO.port}/tiger.m3u</span>` : ''}</div>
+        <div class="bar">${S.settings.targetPkg ? `<button class="btn pri f" data-act="launchTarget" data-fid="ex-launch">▶ فتح ${esc(S.settings.targetLabel)}</button>` : ''}
+        <button class="btn f" data-act="pickApp" data-fid="ex-pick">${S.settings.targetPkg ? 'تغيير التطبيق' : 'اختيار تطبيق IP Channels لفتحه مباشرة'}</button></div></div>` : '';
+    const permBox = INFO.storage === false ? `<div class="warnbox perm">🔐 لحفظ القائمة على فلاش USB وفي الذاكرة الرئيسية امنح التطبيق صلاحية «الوصول إلى كل الملفات». بدونها تُحفظ في مجلد Download فقط.
+      <button class="btn sm f" data-act="perm" data-fid="ex-perm">منح الصلاحية</button></div>` : '';
+    return `${permBox}<div class="card send">
+        <div class="sendrow"><div class="sendinfo"><b class="ltr">${fmtN(b.count)}</b> <span>${L('قناة في ' + fmtN(b.per.length) + ' باقة', 'channels in ' + fmtN(b.per.length) + ' packages')} · <span class="ltr">${fmtMB(sz)}</span></span></div>
+        <button class="btn pri huge f auto" data-act="doExport" data-fid="ex-go">🚀 حفظ القائمة وإرسالها إلى الرسيفر</button></div>
+        ${IS_TV ? '' : '<button class="btn f" data-act="download" data-fid="ex-dl">⬇ تنزيل الملف على الكمبيوتر</button>'}
+        ${b.count > 5000 ? '<p class="warnbox">⚠ عدد كبير من القنوات؛ إذا رفض الرسيفر الاستيراد قلّل الباقات المفعّلة.</p>' : ''}
+        ${result}</div>
+      <div class="grid-ex">
+      <div class="card"><h2>محتوى القائمة</h2><div class="erows">${rows || '<p class="mut">لا توجد باقات مفعّلة</p>'}</div></div>
+      <div class="card"><h2>خيارات الملف</h2>
+        <label class="fl">اسم الملف</label><input class="in f" data-inp="fname" data-fid="ex-fname" value="${esc(o.fname)}">
+        ${tg('clean', 'تنظيف الأسماء (حذف AR | وغيرها)')}${tg('logos', 'تضمين شعارات القنوات')}${tg('icons', 'رموز بجانب أسماء الباقات')}${tg('chno', 'ترقيم القنوات')}
+      </div></div>
+      <div class="card"><h2>طريقة الإضافة في الرسيفر</h2><ol class="steps">
+        <li>اضغط زر الإرسال، فيُحفظ الملف <b class="ltr">${esc(o.fname)}.m3u</b> في الذاكرة الداخلية ومجلد Download وفلاش USB إن وُجد.</li>
+        <li>افتح <b>IP Channels</b> في الرسيفر ثم اختر الاستيراد/الإضافة من ملف.</li>
+        <li>اختر الملف <b class="ltr">${esc(o.fname)}.m3u</b>. وإذا كان الرسيفر يقبل رابطاً فاستخدم الرابط المباشر.</li>
+      </ol></div>`;
+  };
+  VIEWS.settings = function () {
+    const st = S.settings, o = cfg().opt;
+    const seg = (act, cur, items) => items.map(([k, l]) => `<button class="btn sm f ${cur === k ? 'on' : ''}" data-act="${act}" data-arg="${k}" data-fid="${act}-${k}">${l}</button>`).join('');
+    return `<div class="card"><h2>لغة وأسماء الباقات</h2>
+        <div class="opt"><span>لغة التطبيق</span><div class="seg">${seg('setLang', st.lang || 'ar', [['ar', '<span class="nt">العربية</span>'], ['en', '<span class="nt">English</span>']])}</div></div>
+        <div class="opt"><span>أسماء الباقات في الملف المرسل للرسيفر</span><div class="seg">${seg('setName', o.nameLang, [['ar', 'عربي'], ['en', '<span class="nt">English</span>'], ['both', 'عربي + English']])}</div></div></div>
+      <div class="card"><h2>المظهر</h2>
+        <div class="opt"><span>الوضع النهاري والليلي</span><div class="seg">${seg('setTheme', st.theme || 'dark', [['dark', '🌙 ليلي'], ['light', '☀️ نهاري'], ['auto', '🌗 تلقائي حسب الوقت']])}</div></div></div>
+      <div class="card"><h2>التخزين</h2>
+        <p>${INFO.storage ? '<span class="ok">✓ صلاحية التخزين ممنوحة</span>' : '<span class="bad">✕ صلاحية التخزين غير ممنوحة؛ يلزم منحها لحفظ الملف</span>'}</p>
+        <button class="btn f auto" data-act="perm" data-fid="st-perm">منح صلاحية التخزين</button>
+        <div class="hint">مواقع الحفظ: ${(INFO.exportDirs || []).map(d => `<span class="code">${esc(d)}</span>`).join(' ')}</div></div>
+      <div class="card"><h2>تطبيق IP Channels</h2>
+        <p>${S.settings.targetPkg ? 'التطبيق المختار: <b>' + esc(S.settings.targetLabel) + '</b>' : 'اختر تطبيق القنوات في الرسيفر لفتحه مباشرة بعد الإرسال.'}</p>
+        <button class="btn f" data-act="pickApp" data-fid="st-app">اختيار التطبيق</button></div>
+      <div class="card"><h2>التحكم من الكمبيوتر أو الجوال</h2>
+        <p>افتح هذا الرابط من أي جهاز على نفس شبكة الواي فاي لترتيب القنوات بالماوس:</p>
+        ${(INFO.ips || []).map(ip => `<span class="code big">http://${esc(ip)}:${INFO.port}</span>`).join(' ') || '<span class="mut">غير متصل بالشبكة</span>'}</div>
+      <div class="card"><h2>النسخ الاحتياطي</h2><div class="bar">
+        ${IS_TV ? '' : '<button class="btn f" data-act="backup" data-fid="st-bk">⬇ حفظ نسخة من الإعدادات</button><label class="btn f" tabindex="0">⬆ استعادة<input type="file" id="f-restore" accept=".json" hidden></label>'}
+        <button class="btn danger f" data-act="resetCfg" data-fid="st-reset">إعادة ضبط باقات الاشتراك الحالي</button></div></div>
+      <div class="card"><h2>عن التطبيق</h2><p class="mut">M3U v${esc(INFO.version || '')} · ${esc(INFO.device || '')}</p></div>`;
+  };
+
+  /* ---------------------------------------------------------------- modal / toast */
+  function modal(html) {
+    ui.modal = true;
+    const m = $('#modal');
+    m.innerHTML = `<div class="box">${html}</div>`;
+    m.classList.remove('hidden');
+    translate(m);
+    const f = m.querySelector('.auto') || m.querySelector('.f');
+    if (f) setTimeout(() => f.focus(), 30);
+  }
+  function closeModal() {
+    ui.modal = null;
+    $('#modal').classList.add('hidden');
+    $('#modal').innerHTML = '';
+    render();
+  }
+  let toastT;
+  function toast(msg, cls) {
+    const t = $('#toast');
+    t.textContent = tr(msg); t.className = 'show ' + (cls || '');
+    clearTimeout(toastT); toastT = setTimeout(() => { t.className = ''; }, 2600);
+  }
+  function chMenu(c) {
+    const pks = cfg().pk.filter(p => p.id !== 'fav');
+    const btns = pks.map(p => {
+      const on = inPk(p, c);
+      return `<button class="pkpick f ${on ? 'on' : ''}" style="${cv(p.col)}" data-act="mToggle" data-arg="${p.id}|${c.i}"><span class="nt">${p.ic} ${esc(pkName(p))}</span>${on ? ' ✓' : ''}</button>`;
+    }).join('');
+    modal(`<div class="mhead">${logo(c)}<div><h2 class="nt">${esc(dispName(c))}</h2><p class="mut small nt">${esc(c.g)} ${qTag(c.q)}</p></div></div>
+      <label class="fl">إعادة تسمية</label>
+      <div class="bar"><input class="in rtl f" id="m-name" value="${esc(dispName(c))}"><button class="btn f" data-act="mRename" data-arg="${c.i}">حفظ</button></div>
+      <label class="fl">الباقات (اضغط للإضافة/الإزالة)</label><div class="pkpicks">${btns}</div>
+      <div class="bar">
+        <button class="btn f" data-act="mPlay" data-arg="${c.i}">▶ تشغيل للتجربة</button>
+        <button class="btn f" data-act="mProbe" data-arg="${c.i}">🩺 فحص الرابط</button>
+        ${ui.view === 'pack' && !ui.showRem ? `<button class="btn f" data-act="mPos" data-arg="${c.i}">#️⃣ نقل إلى رقم</button>` : ''}
+        <span id="m-probe" class="mut"></span></div>
+      <div class="bar end"><button class="btn pri f auto" data-act="closeModal">تم</button></div>`);
+  }
+  function pkEditor(pk, isNew) {
+    if (!pk) isNew = true;
+    pk = pk || { id: 'c' + Date.now().toString(36), ar: '', en: '', ic: '📺', col: COLORS[cfg().pk.length % COLORS.length], on: true, auto: false, lang: 'all', kw: '', grp: [], add: [], rem: [], ord: [] };
+    ui.editPk = pk; ui.editNew = !!isNew;
+    const icons = ['📺', '⚽', '🎬', '🎭', '📰', '🕌', '🧸', '🌿', '🎉', '💎', '🌙', '🌍', '🎵', '🏎️', '🍳', '🏆', '📡', '❤️'];
+    modal(`<h2>${isNew ? 'باقة جديدة' : 'إعدادات الباقة'}</h2>
+      <div class="grid2"><div><label class="fl">الاسم بالعربي</label><input class="in rtl f auto" id="e-ar" value="${esc(pk.ar)}"></div>
+      <div><label class="fl">الاسم بالإنجليزي</label><input class="in f" id="e-en" value="${esc(pk.en)}"></div></div>
+      <label class="fl">الرمز</label><div class="icons">${icons.map(i => `<button class="ib f ${pk.ic === i ? 'on' : ''}" data-act="eIcon" data-arg="${i}">${i}</button>`).join('')}</div>
+      <label class="fl">اللون</label><div class="icons">${COLORS.concat(['#f5b301', '#84cc16', '#6366f1']).map(c => `<button class="colr f ${pk.col === c ? 'on' : ''}" style="${cv(c)}" data-act="eCol" data-arg="${c}"></button>`).join('')}</div>
+      <label class="fl">كلمات للتصنيف التلقائي (افصل بفاصلة)</label><input class="in rtl f" id="e-kw" placeholder="مثال: MBC, روتانا, OSN" value="${esc(pk.kw)}">
+      ${RULES[pk.id] || pk.id === 'arabic' || pk.id === 'foreign' ? `<div class="opt"><span>التصنيف التلقائي الذكي</span><button class="sw f ${pk.auto !== false ? 'on' : ''}" data-act="eAuto"><i></i></button></div>` : ''}
+      ${pk.grp && pk.grp.length ? `<label class="fl">مجموعات مضافة</label><div class="icons">${pk.grp.map((g, i) => `<button class="btn sm f" data-act="eGrpDel" data-arg="${i}">${esc(g)} ✕</button>`).join('')}</div>` : ''}
+      <div class="bar end">${!isNew && !BUILTIN.some(b => b.id === pk.id) ? '<button class="btn danger f" data-act="eDelete">حذف الباقة</button>' : ''}
+      ${!isNew ? '<button class="btn f" data-act="eReset">مسح التعديلات اليدوية</button>' : ''}
+      <button class="btn f" data-act="closeModal">إلغاء</button><button class="btn pri f" data-act="eSave">حفظ</button></div>`);
+  }
+  function onboard() {
+    const o = cfg().opt;
+    const ex = id => { const b = BUILTIN.find(x => x.id === id); return o.nameLang === 'en' ? b.en : o.nameLang === 'both' ? b.ar + ' | ' + b.en : b.ar; };
+    modal(`<div class="onb"><img src="icon.png" alt=""><h2>${L('تم جلب ' + fmtN(CH.length) + ' قناة ورتّبناها في باقات ✓', fmtN(CH.length) + ' channels loaded and sorted into packages ✓')}</h2>
+      <p class="mut">كيف تريد أن تظهر أسماء الباقات في الرسيفر؟</p></div>
+      <div class="pkpicks onb-langs">
+        <button class="pkpick f auto ${o.nameLang === 'ar' ? 'on' : ''}" data-act="onbName" data-arg="ar">عربي<small class="nt">رياضة · أخبار · أفلام</small></button>
+        <button class="pkpick f ${o.nameLang === 'en' ? 'on' : ''}" data-act="onbName" data-arg="en">English<small class="nt">Sports · News · Movies</small></button>
+        <button class="pkpick f ${o.nameLang === 'both' ? 'on' : ''}" data-act="onbName" data-arg="both">عربي + English<small class="nt">رياضة | Sports</small></button></div>
+      <div class="bar end"><button class="btn pri f" data-act="onbDone">متابعة ‹</button></div>`);
+  }
+  function welcome() {
+    const st = S.settings;
+    const b = (act, cur, k, l) => `<button class="pkpick f ${cur === k ? 'on auto' : ''}" data-act="${act}" data-arg="${k}">${l}</button>`;
+    modal(`<div class="onb"><img src="icon.png" alt=""><h2>مرحباً بك في M3U</h2><p class="mut">اختر لغة التطبيق والمظهر المناسب لك</p></div>
+      <label class="fl">لغة التطبيق</label><div class="pkpicks onb-langs">${b('wLang', st.lang || 'ar', 'ar', '<span class="nt">🇸🇦 العربية</span>')}${b('wLang', st.lang || 'ar', 'en', '<span class="nt">🇬🇧 English</span>')}</div>
+      <label class="fl">المظهر</label><div class="pkpicks onb-langs">${b('wTheme', st.theme || 'dark', 'dark', '🌙 ليلي')}${b('wTheme', st.theme || 'dark', 'light', '☀️ نهاري')}</div>
+      <div class="bar end"><button class="btn pri big f" data-act="welcomeDone">ابدأ ‹</button></div>`);
+  }
+  function pickTarget(after) {
+    modal(`<h2>اختر الباقة</h2><div class="pkpicks">${cfg().pk.map((p, i) => `<button class="pkpick f ${i === 0 ? 'auto' : ''} ${ui.target === p.id ? 'on' : ''}" style="${cv(p.col)}" data-act="setTarget" data-arg="${p.id}${after ? '|' + after : ''}"><span class="nt">${p.ic} ${esc(pkName(p))}</span></button>`).join('')}</div>
+      <div class="bar end"><button class="btn f" data-act="closeModal">إلغاء</button></div>`);
+  }
+
+  /* ---------------------------------------------------------------- actions */
+  const chAt = i => CH[+i];
+  const ACT = {
+    go: v => go(v),
+    page: p => { ui.page = Math.max(0, +p); ui.move = null; render(true); },
+    closeModal: () => closeModal(),
+    srcTab: t => { readForm(); ui.srcTab = t; render(); },
+    xtOut: o => { readForm(); ui.editSrc.output = o; render(); },
+    srcAdd: () => {
+      const f = readForm();
+      let s;
+      if (ui.srcTab === 'link') {
+        if (!f.url) return toast('أدخل رابط الاشتراك', 'bad');
+        s = detectLink(f.url);
+        if (!s) return toast('الرابط غير صحيح، تأكد أنه يبدأ بـ http', 'bad');
+      } else {
+        if (!f.server || !f.user || !f.pass) return toast('أكمل بيانات Xtream', 'bad');
+        let sv = f.server.trim(); if (!/^https?:\/\//i.test(sv)) sv = 'http://' + sv;
+        s = { type: 'xtream', server: sv, user: f.user.trim(), pass: f.pass.trim(), output: f.output || 'ts' };
+      }
+      s.id = 's' + Date.now().toString(36);
+      s.name = f.name || (s.type === 'xtream' ? (s.user + ' @ ' + s.server.replace(/^https?:\/\//, '')) : 'اشتراك ' + (S.sources.length + 1));
+      S.sources.push(s); ui.editSrc = {};
+      loadSource(s, false);
+    },
+    srcLoad: i => loadSource(S.sources[+i], false),
+    srcCache: i => loadSource(S.sources[+i], true),
+    srcDel: i => {
+      const s = S.sources[+i];
+      modal(`<h2>حذف "${esc(s.name)}"؟</h2><p class="mut">ستُحذف الباقات والترتيب الخاص بهذا الاشتراك.</p>
+        <div class="bar end"><button class="btn f auto" data-act="closeModal">إلغاء</button><button class="btn danger f" data-act="srcDelYes" data-arg="${i}">حذف</button></div>`);
+    },
+    srcDelYes: i => {
+      const s = S.sources.splice(+i, 1)[0];
+      delete S.cfg[s.id];
+      if (S.active === s.id) { S.active = null; CH = []; GROUPS = []; ACC = null; MEMO = null; }
+      save(); closeModal();
+    },
+    pickDevice: async () => {
+      modal('<h2>جاري البحث عن ملفات M3U…</h2><div class="prog ind"><i></i></div>');
+      try {
+        const files = await (await fetch('/api/files')).json();
+        if (!files.length) return modal(`<h2>لم يتم العثور على ملفات</h2><p class="mut">انسخ ملف .m3u إلى فلاش USB أو مجلد Download ثم أعد المحاولة.</p><div class="bar end"><button class="btn pri f auto" data-act="closeModal">حسناً</button></div>`);
+        ui.files = files;
+        modal(`<h2>اختر ملف القنوات</h2><div class="list">${files.map((f, i) => `<button class="rowmain filerow f ${i === 0 ? 'auto' : ''}" data-act="importFile" data-arg="${i}"><span class="gic">📄</span><span class="nm"><b class="ltr">${esc(f.name)}</b><small class="ltr">${esc(f.path)} · ${fmtMB(f.size)}</small></span></button>`).join('')}</div>
+          <div class="bar end"><button class="btn f" data-act="closeModal">إلغاء</button></div>`);
+      } catch (e) { closeModal(); toast('تعذر قراءة الذاكرة', 'bad'); }
+    },
+    importFile: async i => {
+      const f = ui.files[+i], name = (readForm().name) || f.name.replace(/\.[^.]+$/, '');
+      const s = { id: 's' + Date.now().toString(36), type: 'file', name };
+      const r = await fetch('/api/importfile?id=' + enc(s.id) + '&path=' + enc(f.path), { method: 'POST' });
+      closeModal();
+      if (!r.ok) return toast(await r.text(), 'bad');
+      S.sources.push(s); loadSource(s, true);
+    },
+    optSet: a => { const [k, v] = a.split(':'); cfg().opt[k] = v; changed(); render(); },
+    optTog: k => { const o = cfg().opt; o[k] = !o[k]; changed(); render(); },
+    pkOpen: id => go('pack', { pk: id }),
+    pkToggle: id => { const p = pkById(id); p.on = !p.on; changed(); render(); toast(p.on ? 'تم تفعيل ' + pkName(p) : 'تم إيقاف ' + pkName(p)); },
+    pkMove: id => { ui.move = { kind: 'pk', key: id }; render(); },
+    pkEdit: id => pkEditor(pkById(id)),
+    pkNew: () => pkEditor(null),
+    pkAddCh: id => { ui.target = id; go('browse'); },
+    pkSort: id => {
+      modal(`<h2>ترتيب تلقائي</h2><div class="pkpicks">
+        <button class="pkpick f auto" data-act="doSort" data-arg="${id}|az">🔤 أبجدي (أ-ي / A-Z)</button>
+        <button class="pkpick f" data-act="doSort" data-arg="${id}|q">💎 الجودة الأعلى أولاً</button>
+        <button class="pkpick f" data-act="doSort" data-arg="${id}|lang">🌙 العربي أولاً</button>
+        <button class="pkpick f" data-act="doSort" data-arg="${id}|orig">↺ ترتيب المزود الأصلي</button></div>
+        <div class="bar end"><button class="btn f" data-act="closeModal">إلغاء</button></div>`);
+    },
+    doSort: a => {
+      const [id, how] = a.split('|'), pk = pkById(id);
+      if (how === 'orig') pk.ord = [];
+      else {
+        MEMO = null; const list = members(id).slice();
+        const coll = new Intl.Collator(['ar', 'en'], { numeric: true, sensitivity: 'base' });
+        if (how === 'az') list.sort((x, y) => coll.compare(dispName(x), dispName(y)));
+        if (how === 'q') list.sort((x, y) => (y.q - x.q) || coll.compare(dispName(x), dispName(y)));
+        if (how === 'lang') list.sort((x, y) => ((x.lang === 'ar' ? 0 : 1) - (y.lang === 'ar' ? 0 : 1)) || (x.i - y.i));
+        pk.ord = list.map(c => c.k);
+      }
+      changed(); closeModal(); toast('تم الترتيب ✓', 'ok');
+    },
+    pkProbe: async id => {
+      const list = members(id).slice(0, 500);
+      let ok = 0, bad = [], stop = false;
+      ui.probeStop = () => { stop = true; };
+      modal(`<h2>فحص القنوات</h2><p id="pr-t" class="mut">0 / ${list.length}</p><div class="prog"><i id="pr-b"></i></div>
+        <p class="hint">الفحص يتم قناة بقناة حتى لا يتجاوز عدد الاتصالات المسموحة في اشتراكك.</p>
+        <div class="bar end"><button class="btn f auto" data-act="probeStop">إيقاف</button></div>`);
+      for (let i = 0; i < list.length && !stop; i++) {
+        try { const r = await (await fetch('/api/probe?url=' + enc(list[i].u))).json(); if (r.ok) ok++; else bad.push(list[i]); } catch (e) { bad.push(list[i]); }
+        const t = $('#pr-t'), b = $('#pr-b');
+        if (!t) break;
+        t.textContent = `${i + 1} / ${list.length} · تعمل: ${ok} · متوقفة: ${bad.length}`; b.style.width = ((i + 1) / list.length * 100) + '%';
+      }
+      ui.deadList = bad;
+      if ($('#pr-t')) modal(`<h2>نتيجة الفحص</h2><p><span class="ok">✓ ${ok} تعمل</span> · <span class="bad">✕ ${bad.length} متوقفة</span></p>
+        <div class="list small">${bad.slice(0, 30).map(c => `<div class="path">✕ ${esc(dispName(c))}</div>`).join('')}</div>
+        <div class="bar end"><button class="btn f auto" data-act="closeModal">إغلاق</button>${bad.length ? `<button class="btn danger f" data-act="removeDead" data-arg="${id}">حذف المتوقفة من الباقة</button>` : ''}</div>`);
+    },
+    probeStop: () => { ui.probeStop && ui.probeStop(); closeModal(); },
+    removeDead: id => { const pk = pkById(id); ui.deadList.forEach(c => removeFrom(pk, c)); closeModal(); toast('تم حذف ' + ui.deadList.length + ' قناة'); },
+    showRem: () => { ui.showRem = !ui.showRem; ui.page = 0; render(true); },
+    chMove: i => {
+      const c = chAt(i);
+      if (ui.q) return toast('امسح البحث أولاً لتتمكن من الترتيب', 'bad');
+      if (ui.move && ui.move.key === c.k) { ui.move = null; render(); return; }
+      ui.move = { kind: 'ch', pk: ui.pk, key: c.k }; render();
+    },
+    chFav: i => { const c = chAt(i); toggleFav(c); render(); toast(inPk(pkById('fav'), c) ? '⭐ أضيفت للمفضلة' : 'أزيلت من المفضلة'); },
+    chRemove: i => { const c = chAt(i); removeFrom(pkById(ui.pk), c); render(); toast('حُذفت ' + dispName(c)); },
+    chRestore: i => { const c = chAt(i), pk = pkById(ui.pk); pk.rem = pk.rem.filter(k => k !== c.k); changed(); render(); },
+    chTarget: i => { const c = chAt(i), tp = pkById(ui.target) || pkById('fav'); if (inPk(tp, c)) removeFrom(tp, c); else addTo(tp, c); render(); },
+    chMenu: i => chMenu(chAt(i)),
+    mToggle: a => { const [id, i] = a.split('|'), pk = pkById(id), c = chAt(i); if (inPk(pk, c)) removeFrom(pk, c); else addTo(pk, c); chMenu(c); },
+    mRename: i => { const c = chAt(i), v = $('#m-name').value.trim(); if (v && v !== c.n) cfg().cren[c.k] = v; else delete cfg().cren[c.k]; changed(); toast('تم ✓', 'ok'); },
+    mPlay: i => fetch('/api/play?url=' + enc(chAt(i).u)).then(r => r.json()).then(j => toast(j.ok ? 'جاري التشغيل…' : 'لا يوجد مشغل فيديو', j.ok ? 'ok' : 'bad')),
+    mProbe: async i => { const el = $('#m-probe'); el.textContent = '…'; const r = await (await fetch('/api/probe?url=' + enc(chAt(i).u))).json(); el.innerHTML = r.ok ? `<span class="ok">✓ تعمل (${r.ms}ms)</span>` : `<span class="bad">✕ لا تعمل (${r.code || r.error || ''})</span>`; },
+    mPos: i => {
+      const c = chAt(i);
+      modal(`<h2>نقل "${esc(dispName(c))}" إلى الرقم</h2><input class="in f auto" id="m-pos" type="number" min="1" value="1">
+        <div class="bar end"><button class="btn f" data-act="closeModal">إلغاء</button><button class="btn pri f" data-act="mPosGo" data-arg="${i}">نقل</button></div>`);
+    },
+    mPosGo: i => { const c = chAt(i), pos = Math.max(1, +$('#m-pos').value || 1) - 1; moveTo(pkById(ui.pk), c.k, pos); ui.page = Math.floor(pos / PAGE); closeModal(); toast('تم النقل ✓', 'ok'); },
+    pickTarget: () => pickTarget(),
+    setTarget: a => {
+      const [id, after] = a.split('|'); ui.target = id; closeModal();
+      if (after === 'grp') ACT.grpAll();
+    },
+    grpOpen: i => go('group', { grp: GROUPS[+i].name }),
+    grpToPk: i => { ui.grp = GROUPS[+i].name; pickTarget('grp'); },
+    grpAll: () => {
+      const tp = pkById(ui.target) || pkById('fav');
+      if (tp.id === 'fav') { const g = GROUPS.find(x => x.name === ui.grp); g.list.forEach(c => { if (!inPk(tp, c)) tp.add.push(c.k); }); }
+      else if (!(tp.grp || []).includes(ui.grp)) tp.grp = [...(tp.grp || []), ui.grp];
+      changed(); render(); toast('أُضيفت المجموعة إلى ' + pkName(tp), 'ok');
+    },
+    grpNewPk: () => {
+      const pk = { id: 'c' + Date.now().toString(36), ar: ui.grp, en: ui.grp, ic: '📺', col: COLORS[cfg().pk.length % COLORS.length], on: true, auto: false, lang: 'all', kw: '', grp: [ui.grp], add: [], rem: [], ord: [] };
+      cfg().pk.push(pk); changed(); toast('تم إنشاء باقة ' + ui.grp, 'ok'); go('pack', { pk: pk.id });
+    },
+    eIcon: i => { ui.editPk.ic = i; refreshEditor(); },
+    eCol: c => { ui.editPk.col = c; refreshEditor(); },
+    eLang: l => { ui.editPk.lang = l; refreshEditor(); },
+    eAuto: () => { ui.editPk.auto = ui.editPk.auto === false; refreshEditor(); },
+    eGrpDel: i => { ui.editPk.grp.splice(+i, 1); refreshEditor(); },
+    eSave: () => {
+      const pk = ui.editPk; readEditor();
+      if (!pk.ar && !pk.en) return toast('اكتب اسم الباقة', 'bad');
+      pk.ar = pk.ar || pk.en; pk.en = pk.en || pk.ar;
+      if (ui.editNew) cfg().pk.push(pk);
+      changed(); closeModal(); toast('تم الحفظ ✓', 'ok');
+    },
+    eReset: () => { const pk = ui.editPk; pk.add = []; pk.rem = []; pk.ord = []; changed(); closeModal(); toast('تمت إعادة الباقة لوضعها التلقائي'); },
+    eDelete: () => { cfg().pk = cfg().pk.filter(p => p !== ui.editPk); changed(); closeModal(); if (ui.view === 'pack') go('packs'); },
+    doExport: async () => {
+      const b = buildM3U();
+      if (!b.count) return toast('لا توجد قنوات؛ فعّل باقة واحدة على الأقل', 'bad');
+      toast('جاري الحفظ…');
+      try {
+        const r = await (await fetch('/api/export?name=' + enc(cfg().opt.fname || 'tiger'), { method: 'POST', body: b.text })).json();
+        ui.exportRes = { saved: r.saved || [], failed: r.failed || [], count: b.count };
+        render();
+        toast(r.saved && r.saved.length ? L('تم الحفظ في ' + r.saved.length + ' موقع ✓', 'Saved to ' + r.saved.length + ' locations ✓') : 'تعذر الحفظ؛ امنح صلاحية التخزين', r.saved && r.saved.length ? 'ok' : 'bad');
+        if (!INFO.storage && !(r.saved || []).length) ACT.perm();
+      } catch (e) { toast('خطأ في الحفظ', 'bad'); }
+    },
+    download: () => {
+      const b = buildM3U(), a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([b.text], { type: 'audio/x-mpegurl' }));
+      a.download = (cfg().opt.fname || 'tiger') + '.m3u'; a.click();
+    },
+    perm: () => { fetch('/api/permission', { method: 'POST' }); toast('امنح الصلاحية ثم ارجع للتطبيق'); },
+    pickApp: async () => {
+      const apps = await (await fetch('/api/apps')).json();
+      apps.sort((a, b) => (/ip|tv|channel|tiger|dvb|live/i.test(b.label) ? 1 : 0) - (/ip|tv|channel|tiger|dvb|live/i.test(a.label) ? 1 : 0));
+      ui.apps = apps;
+      modal(`<h2>اختر تطبيق IP Channels</h2><div class="list">${apps.map((a, i) => `<button class="rowmain filerow f ${i === 0 ? 'auto' : ''}" data-act="setApp" data-arg="${i}"><span class="nm"><b>${esc(a.label)}</b><small class="ltr">${esc(a.pkg)}</small></span></button>`).join('') || '<p class="mut">لا توجد تطبيقات</p>'}</div>
+        <div class="bar end"><button class="btn f" data-act="closeModal">إلغاء</button></div>`);
+    },
+    setApp: i => { const a = ui.apps[+i]; S.settings.targetPkg = a.pkg; S.settings.targetLabel = a.label; save(); closeModal(); toast('تم اختيار ' + a.label, 'ok'); },
+    launchTarget: () => fetch('/api/launch?pkg=' + enc(S.settings.targetPkg)),
+    backup: () => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([JSON.stringify(S, null, 1)], { type: 'application/json' }));
+      a.download = 'm3u-backup.json'; a.click();
+    },
+    resetCfg: () => {
+      modal(`<h2>إعادة الضبط؟</h2><p class="mut">ستعود الباقات للتصنيف التلقائي وتُحذف المفضلة والترتيب.</p>
+        <div class="bar end"><button class="btn f auto" data-act="closeModal">إلغاء</button><button class="btn danger f" data-act="resetYes">إعادة الضبط</button></div>`);
+    },
+    onbName: k => { cfg().opt.nameLang = k; changed(); onboard(); },
+    onbDone: () => { cfg().opt.asked = true; changed(); closeModal(); },
+    setLang: l => { S.settings.lang = l; save(); closeModal(); },
+    setName: k => { cfg().opt.nameLang = k; changed(); render(); },
+    setTheme: t => { S.settings.theme = t; save(); render(); },
+    themeToggle: () => { const c = document.documentElement.dataset.theme; S.settings.theme = c === 'dark' ? 'light' : 'dark'; save(); render(); },
+    welcomeDone: () => { S.settings.lang = S.settings.lang || 'ar'; S.settings.welcomed = true; save(); closeModal(); },
+    wLang: l => { S.settings.lang = l; applyLook(); welcome(); },
+    wTheme: t => { S.settings.theme = t; applyLook(); welcome(); },
+    resetYes: () => { if (S.active) S.cfg[S.active] = newCfg(); changed(); closeModal(); }
+  };
+  function readForm() {
+    const v = id => { const e = $('#' + id); return e ? e.value.trim() : undefined; };
+    const e = ui.editSrc = ui.editSrc || {};
+    ['name', 'url', 'server', 'user', 'pass'].forEach(k => { const x = v('f-' + k); if (x !== undefined) e[k] = x; });
+    return e;
+  }
+  function readEditor() {
+    const pk = ui.editPk, v = id => ($('#' + id) || {}).value;
+    if (v('e-ar') !== undefined) { pk.ar = v('e-ar').trim(); pk.en = v('e-en').trim(); pk.kw = v('e-kw').trim(); }
+  }
+  function refreshEditor() { readEditor(); pkEditor(ui.editPk, ui.editNew); }
+
+  document.addEventListener('click', e => {
+    const t = e.target.closest('[data-act]');
+    if (!t || t.disabled) return;
+    const fn = ACT[t.dataset.act];
+    if (fn) { e.preventDefault(); fn(t.dataset.arg, t, e); }
+  });
+  let inpT;
+  document.addEventListener('input', e => {
+    const t = e.target;
+    if (t.dataset.inp === 'q') {
+      clearTimeout(inpT);
+      inpT = setTimeout(() => { ui.q = t.value.trim(); ui.page = 0; render(); }, 280);
+    } else if (t.dataset.inp === 'fname') { cfg().opt.fname = t.value.trim() || 'tiger'; save(); }
+  });
+  document.addEventListener('change', async e => {
+    const t = e.target;
+    if (t.id === 'f-file' && t.files[0]) {
+      const file = t.files[0], text = await file.text();
+      const name = readForm().name || file.name.replace(/\.[^.]+$/, '');
+      const s = { id: 's' + Date.now().toString(36), type: 'file', name };
+      await fetch('/api/upload?id=' + enc(s.id), { method: 'POST', body: text });
+      S.sources.push(s); loadSource(s, true);
+    }
+    if (t.id === 'f-restore' && t.files[0]) {
+      try { const j = JSON.parse(await t.files[0].text()); if (j.sources) { S = j; save(); toast('تمت الاستعادة ✓', 'ok'); init(); } } catch (er) { toast('ملف غير صالح', 'bad'); }
+    }
+  });
+  /* drag & drop with the mouse (PC / phone browser) */
+  document.addEventListener('dragstart', e => { const r = e.target.closest('[data-drag]'); if (r) { ui.dragKey = r.dataset.drag; e.dataTransfer.effectAllowed = 'move'; r.classList.add('dragging'); } });
+  document.addEventListener('dragend', e => { document.querySelectorAll('.dragging,.dropover').forEach(x => x.classList.remove('dragging', 'dropover')); });
+  document.addEventListener('dragover', e => { const r = e.target.closest('[data-drag]'); if (r && ui.dragKey) { e.preventDefault(); document.querySelectorAll('.dropover').forEach(x => x.classList.remove('dropover')); r.classList.add('dropover'); } });
+  document.addEventListener('drop', e => {
+    const r = e.target.closest('[data-drag]'); if (!r || !ui.dragKey) return;
+    e.preventDefault();
+    const [k1, a] = ui.dragKey.split(':'), [k2, b] = r.dataset.drag.split(':');
+    ui.dragKey = null;
+    if (k1 !== k2 || a === b) return;
+    if (k1 === 'pk') {
+      const arr = cfg().pk, i = arr.findIndex(p => p.id === a), j = arr.findIndex(p => p.id === b);
+      const [x] = arr.splice(i, 1); arr.splice(j, 0, x);
+    } else {
+      const pk = pkById(ui.pk), list = members(pk.id).map(c => c.k), ka = CH[+a].k, kb = CH[+b].k;
+      const j = list.indexOf(kb); moveTo(pk, ka, j);
+    }
+    changed(); render();
+  });
+
+  /* ---------------------------------------------------------------- init */
+  async function refreshInfo() {
+    try { INFO = await (await fetch('/api/info')).json(); renderSide(); } catch (e) { }
+  }
+  async function init() {
+    await refreshInfo();
+    try { const st = await (await fetch('/api/state')).json(); if (st && st.sources) S = Object.assign(S, st); } catch (e) { }
+    S.settings = S.settings || {};
+    applyLook();
+    const s = src();
+    if (s && s.count) { loadSource(s, true); }
+    else { ui.view = 'subs'; render(true); }
+    if (!S.settings.welcomed) welcome();
+  }
+  init();
+  window.__m3u = { parseM3U, setChannels, computeAll, buildM3U, cfg, S: () => S, cleanName, detectLink, CH: () => CH };
+})();
