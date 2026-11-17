@@ -73,7 +73,7 @@ public class MainActivity extends Activity {
         web.loadUrl("http://127.0.0.1:" + server.getPort() + "/?tv=1");
         web.requestFocus(View.FOCUS_DOWN);
 
-        if (Build.VERSION.SDK_INT >= 23 && Build.VERSION.SDK_INT < 30
+        if (Build.VERSION.SDK_INT >= 23
                 && checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE, Manifest.permission.READ_EXTERNAL_STORAGE}, 1);
         }
@@ -83,6 +83,11 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         current = this;
+        if (web != null) web.evaluateJavascript("window.onAppResume&&window.onAppResume()", null);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         if (web != null) web.evaluateJavascript("window.onAppResume&&window.onAppResume()", null);
     }
 
@@ -242,7 +247,7 @@ public class MainActivity extends Activity {
         }
 
         @Override public boolean hasStoragePermission() {
-            if (Build.VERSION.SDK_INT >= 30) return Environment.isExternalStorageManager();
+            if (Build.VERSION.SDK_INT >= 30 && Environment.isExternalStorageManager()) return true;
             if (Build.VERSION.SDK_INT >= 23)
                 return ctx.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
             return true;
@@ -250,6 +255,13 @@ public class MainActivity extends Activity {
 
         @Override public void requestStoragePermission() {
             final Activity a = current;
+            // targetSdk 29: the normal runtime dialog grants full (legacy) storage access, also on Android 11+
+            if (a != null && Build.VERSION.SDK_INT >= 23
+                    && ctx.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                a.runOnUiThread(() -> a.requestPermissions(new String[]{
+                        Manifest.permission.WRITE_EXTERNAL_STORAGE, Manifest.permission.READ_EXTERNAL_STORAGE}, 1));
+                return;
+            }
             if (Build.VERSION.SDK_INT >= 30) {
                 try {
                     Intent i = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
