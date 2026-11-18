@@ -281,12 +281,26 @@ public class MainActivity extends Activity {
     public static class UpdatedReceiver extends BroadcastReceiver {
         @Override
         public void onReceive(Context context, Intent intent) {
-            try {
-                Intent i = new Intent(context, MainActivity.class);
-                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-                context.startActivity(i);
-            } catch (Exception ignored) { }
+            relaunch(context);
         }
+    }
+
+    /** Reopen the app after an update. Android 10+ blocks direct starts from the
+     *  background, but an activity PendingIntent fired by the system AlarmManager is allowed. */
+    static void relaunch(Context context) {
+        Intent i = new Intent(context, MainActivity.class);
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        try {
+            int fl = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 23 ? 0x04000000 : 0);
+            PendingIntent pi = PendingIntent.getActivity(context, 7713, i, fl);
+            android.app.AlarmManager am = (android.app.AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+            long at = System.currentTimeMillis() + 700;
+            if (am != null) {
+                if (Build.VERSION.SDK_INT >= 23) am.setExactAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, at, pi);
+                else am.setExact(android.app.AlarmManager.RTC_WAKEUP, at, pi);
+            }
+        } catch (Throwable ignored) { }
+        try { context.startActivity(i); } catch (Throwable ignored) { }
     }
 
     /** Result of the in-app updater (PackageInstaller). */
@@ -294,6 +308,7 @@ public class MainActivity extends Activity {
         @Override
         public void onReceive(Context context, Intent intent) {
             int status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, -999);
+            if (status == PackageInstaller.STATUS_SUCCESS) { relaunch(context); return; }
             if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
                 Intent confirm = intent.getParcelableExtra(Intent.EXTRA_INTENT);
                 if (confirm != null) {

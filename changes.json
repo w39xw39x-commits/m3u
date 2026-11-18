@@ -1,12 +1,10 @@
 {
   "notes": [
-    "التحديث يتحمّل تلقائياً عند فتح التطبيق — اضغط «تحديث» مرة واحدة فقط",
-    "إعادة فتح التطبيق تلقائياً بعد انتهاء التحديث",
-    "تحديث صامت بدون أي ضغطة على الأجهزة التي تدعم ذلك (أندرويد 12 فأعلى)"
+    "إصلاح: التطبيق يرجع يفتح لحاله بعد التثبيت بدل ما يطلعك للشاشة الرئيسية",
+    "التحديث يتحمّل تلقائياً عند فتح التطبيق — فقط اضغط «تحديث» في نافذة النظام"
   ],
   "notes_en": [
-    "The update downloads by itself when the app opens — press “Update” just once",
-    "The app reopens automatically after updating",
-    "Fully silent updates on devices that support it (Android 12+)"
+    "Fix: the app now reopens by itself after installing instead of returning to the home screen",
+    "The update downloads automatically when the app opens — just press “Update” in the system window"
   ]
 }
