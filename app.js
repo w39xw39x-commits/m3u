@@ -930,30 +930,31 @@
     const pk = pkById(p.pk); if (!pk) return '';
     const mem = members(pk.id);
     const st = c => p.res[c.k] || '';
-    const nBad = mem.filter(c => st(c) === 'bad').length, nOk = mem.filter(c => st(c) === 'ok').length;
+    const nBad = mem.filter(c => st(c) === 'bad').length, nOk = mem.filter(c => st(c) === 'ok').length, nUnk = mem.filter(c => st(c) === 'unk').length;
+    const rank = { bad: 0, unk: 1, ok: 2 };
     let list = mem.filter(c => st(c));
-    list.sort((a, b) => (st(a) === 'bad' ? 0 : 1) - (st(b) === 'bad' ? 0 : 1));
-    if (p.filter === 'bad') list = list.filter(c => st(c) === 'bad'); else if (p.filter === 'ok') list = list.filter(c => st(c) === 'ok');
+    list.sort((a, b) => rank[st(a)] - rank[st(b)]);
+    if (p.filter !== 'all') list = list.filter(c => st(c) === p.filter);
     if (ui.q) { const q = ui.q.toLowerCase(); list = list.filter(c => dispName(c).toLowerCase().includes(q)); }
     const nSel = Object.keys(p.sel).length;
     const start = ui.page * PAGE, page = list.slice(start, start + PAGE);
     const seg = (k, l) => `<button class="btn sm f ${p.filter === k ? 'on' : ''}" data-act="prFilter" data-arg="${k}" data-fid="prf-${k}">${l}</button>`;
     const rows = page.map((c, i) => {
-      const bad = st(c) === 'bad', on = !!p.sel[c.k], fid = 'pr-' + c.i;
+      const bad = st(c) === 'bad', unk = st(c) === 'unk', on = !!p.sel[c.k], fid = 'pr-' + c.i;
       return `<div class="row prow ${bad ? 'dead' : ''} ${on ? 'sel' : ''}"><button class="ib chk f ${on ? 'on' : ''}" data-act="prSel" data-arg="${c.i}" data-fid="${fid}-s">${on ? '✓' : ''}</button>
-        <button class="rowmain f" data-act="prSel" data-arg="${c.i}" data-fid="${fid}"><span class="dot ${bad ? 'b' : 'g'}"></span>${logo(c)}<span class="nm nt"><b>${esc(dispName(c))}</b><small>${bad ? L('متوقفة', 'Stopped') : L('تعمل', 'Working')} · ${esc(c.g)}</small></span></button>
+        <button class="rowmain f" data-act="prSel" data-arg="${c.i}" data-fid="${fid}"><span class="dot ${bad ? 'b' : unk ? 'y' : 'g'}"></span>${logo(c)}<span class="nm nt"><b>${esc(dispName(c))}</b><small>${bad ? L('متوقفة', 'Stopped') : unk ? L('غير مؤكد — جرّبها ▶', 'Unsure — try ▶') : L('تعمل', 'Working')} · ${esc(c.g)}</small></span></button>
         <button class="ib play f" data-act="pvPlay" data-arg="${c.i}" data-fid="${fid}-p">▶</button>
         <button class="ib del f" data-act="chRemove" data-arg="${c.i}" data-fid="${fid}-x">✕</button></div>`;
     }).join('');
     return `<div class="pkhead" style="${cv(pk.col)}">
-        <div class="pkinfo"><span class="big-ic">🩺</span><div><b class="nt">${esc(pkName(pk))}</b><div class="mut small"><span class="bad">● ${fmtN(nBad)} ${L('متوقفة', 'stopped')}</span> · <span class="ok">● ${fmtN(nOk)} ${L('تعمل', 'working')}</span></div></div></div>
+        <div class="pkinfo"><span class="big-ic">🩺</span><div><b class="nt">${esc(pkName(pk))}</b><div class="mut small"><span class="bad">● ${fmtN(nBad)} ${L('متوقفة', 'stopped')}</span> · <span class="warn">● ${fmtN(nUnk)} ${L('غير مؤكد', 'unsure')}</span> · <span class="ok">● ${fmtN(nOk)} ${L('تعمل', 'working')}</span></div></div></div>
         <div class="bar">
           <button class="btn f ${nSel ? '' : 'auto'}" data-act="prSelDead" data-fid="pr-seld">${nSel ? '☐ ' + L('إلغاء التحديد', 'Clear selection') : '☑ ' + L('تحديد كل المتوقفة', 'Select all stopped')}</button>
           <button class="btn danger f ${nSel ? 'auto' : ''}" data-act="prDelSel" data-fid="pr-del" ${nSel ? '' : 'disabled'}>✕ ${L('حذف المحدد', 'Delete selected')} (${fmtN(nSel)})</button>
-          <button class="btn f" data-act="prRecheck" data-fid="pr-re" ${nBad ? '' : 'disabled'}>🔄 ${L('إعادة فحص المتوقفة', 'Re-check stopped')}</button>
+          <button class="btn f" data-act="prRecheck" data-fid="pr-re" ${nBad + nUnk ? '' : 'disabled'}>🔄 ${L('إعادة فحص المتوقفة', 'Re-check stopped')}</button>
           <button class="btn f" data-act="prBack" data-fid="pr-back">↩ ${L('رجوع للباقة', 'Back to package')}</button>
         </div></div>
-      <div class="bar"><div class="seg">${seg('bad', '🔴 ' + L('المتوقفة', 'Stopped') + ' ' + fmtN(nBad))}${seg('ok', '🟢 ' + L('تعمل', 'Working') + ' ' + fmtN(nOk))}${seg('all', L('الكل', 'All'))}</div>
+      <div class="bar"><div class="seg">${seg('bad', '🔴 ' + L('المتوقفة', 'Stopped') + ' ' + fmtN(nBad))}${nUnk ? seg('unk', '🟡 ' + L('غير مؤكد', 'Unsure') + ' ' + fmtN(nUnk)) : ''}${seg('ok', '🟢 ' + L('تعمل', 'Working') + ' ' + fmtN(nOk))}${seg('all', L('الكل', 'All'))}</div>
         <input class="in rtl search f" data-inp="q" data-fid="q" placeholder="🔍 ${L('بحث…', 'Search…')}" value="${esc(ui.q)}"></div>
       ${undoBar()}
       <div class="list">${rows || `<div class="empty"><div class="big">✅</div><p>${L('لا توجد قنوات هنا', 'Nothing here')}</p></div>`}</div>
@@ -1320,27 +1321,46 @@
       const pk = pkById(id);
       const prev = ui.probe && ui.probe.pk === id ? ui.probe.res : {};
       let list = members(id);
-      if (onlyDead) list = list.filter(c => prev[c.k] === 'bad');
+      if (onlyDead) list = list.filter(c => prev[c.k] === 'bad' || prev[c.k] === 'unk');
       if (!list.length) return toast(L('لا توجد قنوات للفحص', 'Nothing to check'), 'bad');
       const res = Object.assign({}, onlyDead ? prev : {});
       let ok = 0, bad = 0, stop = false;
       ui.probeStop = () => { stop = true; };
       modal(`<h2>🩺 ${L('فحص القنوات', 'Checking channels')}</h2><p id="pr-t" class="mut">0 / ${fmtN(list.length)}</p><div class="prog"><i id="pr-b"></i></div>
-        <p class="hint">${L('الفحص يتم قناة بقناة حتى لا يتجاوز عدد الاتصالات المسموحة في اشتراكك.', 'Channels are checked one by one to respect your connection limit.')}</p>
+        <p class="hint">${L('الفحص قناة بقناة، وكل قناة ما ردّت تنفحص مرة ثانية قبل ما تنحسب متوقفة. لأدق نتيجة لا تشغّل قنوات من نفس الاشتراك أثناء الفحص.', 'One channel at a time; every channel that fails is checked a second time. For best results do not watch from the same subscription while checking.')}</p>
         <div class="bar end"><button class="btn f auto" data-act="probeStop">${L('إيقاف وعرض النتيجة', 'Stop & show results')}</button></div>`);
       const qi = cfg().qi || (cfg().qi = {});
+      const sleep = ms => new Promise(z => setTimeout(z, ms));
+      const ask = async (c, to) => { try { return await (await fetch('/api/probe?url=' + enc(c.u) + '&to=' + to)).json(); } catch (e) { return { state: 'busy' }; } };
+      const show = (i, n, pass) => {
+        const t = $('#pr-t'), b = $('#pr-b'); if (!t) { stop = true; return; }
+        t.textContent = (pass ? L('تأكيد ثاني', 'Second check') + ' · ' : '') + `${fmtN(i)} / ${fmtN(n)} · ${L('تعمل', 'working')}: ${fmtN(ok)} · ${L('متوقفة', 'stopped')}: ${fmtN(bad)}`;
+        b.style.width = (i / n * 100) + '%';
+      };
+      // pass 1: quick check, with a short gap so the provider frees the connection slot
+      const retry = [];
       for (let i = 0; i < list.length && !stop; i++) {
-        const c = list[i]; let good = false;
-        try { const r = await (await fetch('/api/probe?url=' + enc(c.u))).json(); good = !!r.ok; } catch (e) { }
-        res[c.k] = good ? 'ok' : 'bad';
-        if (good) { ok++; if (qi[c.k] && qi[c.k].fail) delete qi[c.k]; } else { bad++; qi[c.k] = Object.assign({}, qi[c.k], { fail: true }); }
-        const t = $('#pr-t'), b = $('#pr-b');
-        if (!t) { stop = true; break; }
-        t.textContent = `${fmtN(i + 1)} / ${fmtN(list.length)} · ${L('تعمل', 'working')}: ${fmtN(ok)} · ${L('متوقفة', 'stopped')}: ${fmtN(bad)}`;
-        b.style.width = ((i + 1) / list.length * 100) + '%';
+        const c = list[i], r = await ask(c, 9000);
+        if (r.state === 'ok' || r.ok) { res[c.k] = 'ok'; ok++; } else { retry.push([c, r.state || 'busy']); res[c.k] = 'unk'; }
+        show(i + 1, list.length, 0);
+        await sleep(r.ok ? 250 : 600);
+      }
+      // pass 2: every failure is checked again, slower and with more time; only a confirmed failure counts as stopped
+      for (let i = 0; i < retry.length && !stop; i++) {
+        const [c, s1] = retry[i];
+        await sleep(1500);
+        const r = await ask(c, 15000);
+        if (r.state === 'ok' || r.ok) { res[c.k] = 'ok'; ok++; }
+        else if (s1 === 'dead' || r.state === 'dead') { res[c.k] = 'bad'; bad++; }
+        else res[c.k] = 'unk';
+        show(i + 1, retry.length, 1);
+      }
+      for (const k in res) {
+        if (res[k] === 'ok' && qi[k] && qi[k].fail) delete qi[k];
+        if (res[k] === 'bad') qi[k] = Object.assign({}, qi[k], { fail: true });
       }
       save();
-      ui.probe = { pk: id, res, sel: {}, filter: Object.values(res).includes('bad') ? 'bad' : 'all' };
+      ui.probe = { pk: id, res, sel: {}, filter: Object.values(res).includes('bad') ? 'bad' : Object.values(res).includes('unk') ? 'unk' : 'all' };
       closeModal();
       go('probe');
     },
@@ -1379,14 +1399,19 @@
     mProbe: async i => {
       const c = chAt(i), el = $('#m-probe');
       el.textContent = L('⏳ جاري قياس الجودة (4 ثواني)…', '⏳ Measuring quality (4 s)…');
-      let r; try { r = await (await fetch('/api/probe?measure=1&url=' + enc(c.u))).json(); } catch (e) { r = { ok: false }; }
+      const get = async to => { try { return await (await fetch('/api/probe?measure=1&to=' + to + '&url=' + enc(c.u))).json(); } catch (e) { return { ok: false, state: 'busy' }; } };
+      let r = await get(9000);
+      if (!r.ok) { if ($('#m-probe')) $('#m-probe').textContent = L('⏳ محاولة ثانية…', '⏳ Trying again…'); await new Promise(z => setTimeout(z, 1500)); const r2 = await get(15000); if (r2.ok || r2.state === 'dead' || r.state !== 'dead') r = r2.ok ? r2 : Object.assign(r2, { state: r.state === 'dead' || r2.state === 'dead' ? 'dead' : 'busy' }); }
       const qi = cfg().qi || (cfg().qi = {});
+      if (!$('#m-probe')) return;
       if (r.ok) {
         qi[c.k] = { kbps: r.kbps, ms: r.ms }; save();
-        el.innerHTML = `<span class="ok">✓ ${L('تعمل', 'Working')}</span> · <b>≈ ${kbpsQ(r.kbps)}</b> · <span class="ltr">${fmtRate(r.kbps)}</span> · ${L('استجابة', 'response')} <span class="ltr">${(r.ms / 1000).toFixed(1)}s</span>`;
-      } else {
+        $('#m-probe').innerHTML = `<span class="ok">✓ ${L('تعمل', 'Working')}</span> · <b>≈ ${kbpsQ(r.kbps)}</b> · <span class="ltr">${fmtRate(r.kbps)}</span> · ${L('استجابة', 'response')} <span class="ltr">${(r.ms / 1000).toFixed(1)}s</span>`;
+      } else if (r.state === 'dead') {
         qi[c.k] = { fail: true }; save();
-        el.innerHTML = `<span class="bad">✕ ${L('لا تعمل', 'Not working')}${r.code ? ' (' + r.code + ')' : ''}</span>`;
+        $('#m-probe').innerHTML = `<span class="bad">✕ ${L('لا تعمل', 'Not working')}${r.code ? ' (' + r.code + ')' : ''}</span>`;
+      } else {
+        $('#m-probe').innerHTML = `<span class="warn">⚠ ${L('السيرفر ما ردّ الحين (ممكن مشغول) — جرّبها ▶', 'The server did not answer now (maybe busy) — try ▶')}${r.code ? ' (' + r.code + ')' : ''}</span>`;
       }
     },
     mPos: i => {
@@ -1762,6 +1787,10 @@
     await refreshInfo();
     try { const st = await (await fetch('/api/state')).json(); if (st && st.sources) S = Object.assign(S, st); } catch (e) { }
     S.settings = S.settings || {};
+    if (!S.settings.probeV2) {   // older checks were too strict: forget their "stopped" marks once
+      for (const id in (S.cfg || {})) { const qi = S.cfg[id] && S.cfg[id].qi; if (qi) for (const k in qi) if (qi[k] && qi[k].fail) delete qi[k]; }
+      S.settings.probeV2 = 1; save();
+    }
     applyLook();
     if (S.settings.srcTab) ui.srcTab = S.settings.srcTab;
     const s = src();

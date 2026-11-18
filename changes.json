@@ -1,5 +1,7 @@
 {
   "notes": [
+    "فحص القنوات صار أدق بكثير: كل قناة ما ردّت تنفحص مرة ثانية، والقنوات المشغولة ما تنحسب متوقفة",
+    "حالة جديدة 🟡 «غير مؤكد» للقنوات اللي سيرفرها ما ردّ بوضوح، عشان ما تنحذف بالغلط",
     "اختيار طريقة العرض عند أول تشغيل: TV أو MOBILE، وتقدر تغيّرها من الإعدادات",
     "على الجوال والتابلت: الكيبورد يطلع مباشرة، وزر 📋 للصق الرابط وبيانات Xtream",
     "لصق رابط الاشتراك كامل في خانة سيرفر Xtream يعبّي اسم المستخدم وكلمة المرور تلقائياً",
@@ -9,6 +11,8 @@
     "النوافذ والخطوط صارت تناسب كل الشاشات"
   ],
   "notes_en": [
+    "Much more accurate channel check: every failed channel is checked again, busy channels are not marked stopped",
+    "New 🟡 'Unsure' state for channels whose server did not answer clearly, so they are not deleted by mistake",
     "Choose the display on first launch: TV or MOBILE (changeable in Settings)",
     "On phones and tablets the keyboard opens right away, plus a 📋 paste button",
     "Pasting a full subscription link in the Xtream server field fills username and password",

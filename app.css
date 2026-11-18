@@ -407,3 +407,4 @@ html.tvm #modal .modes{min-width:min(420px,70vw)}
   .row.prow .logo,.row.prow .lg{display:none}
   .pkhead .bar .btn{flex:1 1 calc(50% - 6px);font-size:13.5px;padding:9px 8px}
 }
+.dot.y{background:#fbbf24;box-shadow:0 0 10px rgba(251,191,36,.55)} .warn{color:#fbbf24}

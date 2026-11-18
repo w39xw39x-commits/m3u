@@ -247,7 +247,9 @@ public class WebServer {
                         + ",\"total\":" + upd.getOrDefault("total", -1L) + ",\"error\":" + js((String) upd.get("error")) + "}");
                 return;
             case "/api/probe":
-                json(out, probe(q.get("url"), q.get("measure") != null ? 3000 : 0));
+                int to = 9000;
+                try { if (q.get("to") != null) to = Math.max(3000, Math.min(20000, Integer.parseInt(q.get("to")))); } catch (Exception ignored) { }
+                json(out, probe(q.get("url"), q.get("measure") != null ? 3000 : 0, to));
                 return;
             case "/api/export":
                 json(out, export(q.get("name"), body));
@@ -332,6 +334,7 @@ public class WebServer {
             c.setRequestProperty("User-Agent", UA);
             c.setRequestProperty("Accept", "*/*");
             c.setRequestProperty("Accept-Encoding", "gzip");
+            c.setRequestProperty("Connection", "close");   // free the provider's connection slot right away
             int code = c.getResponseCode();
             if (code >= 300 && code < 400) {
                 String loc = c.getHeaderField("Location");
@@ -394,16 +397,21 @@ public class WebServer {
         }
     }
 
-    private String probe(String url) { return probe(url, 0); }
+    private String probe(String url) { return probe(url, 0, 9000); }
 
-    /** Checks a stream; with measureMs > 0 it also reads the stream for that long to estimate the bitrate. */
-    private String probe(String url, int measureMs) {
+    /** Checks a stream; with measureMs > 0 it also reads the stream for that long to estimate the bitrate.
+     *  state: "ok" (data flows), "dead" (the server says the stream does not exist / cannot be reached),
+     *  "busy" (the server refused or did not answer in time: connection limit, overload, slow start — not proof it is down). */
+    private String probe(String url, int measureMs, int timeoutMs) {
         long t0 = System.currentTimeMillis();
+        HttpURLConnection c = null;
         try {
-            HttpURLConnection c = open(url, 8000, 8000);
+            c = open(url, Math.min(timeoutMs, 10000), timeoutMs);
             int code = c.getResponseCode();
             String type = c.getContentType();
             long got = 0, first = -1, tStart = 0;
+            boolean playlistOk = false, timedOut = false;
+            ByteArrayOutputStream head = new ByteArrayOutputStream();
             try (InputStream is = bodyStream(c)) {
                 byte[] buf = new byte[16384];
                 int r;
@@ -411,22 +419,34 @@ public class WebServer {
                 while ((r = is.read(buf)) != -1) {
                     long now = System.currentTimeMillis();
                     if (first < 0) { first = now - t0; warm = now; }
+                    if (head.size() < 4096) head.write(buf, 0, Math.min(r, 4096 - head.size()));
                     if (measureMs <= 0) { got += r; if (got >= 8192) break; continue; }
                     if (!measuring) { if (now - warm >= 1000) { measuring = true; tStart = now; } else { got = Math.max(got, 1); continue; } }
                     got += r;
                     if (now - tStart >= measureMs) break;
                 }
                 if (measureMs > 0 && !measuring) tStart = warm;
+            } catch (java.net.SocketTimeoutException te) { timedOut = true;
             } catch (Exception ignored) { }
-            c.disconnect();
+            String txt = head.size() > 0 ? new String(head.toByteArray(), 0, head.size(), StandardCharsets.ISO_8859_1) : "";
+            if (txt.startsWith("#EXTM3U")) playlistOk = txt.contains("#EXTINF") || txt.contains("#EXT-X-STREAM-INF") || txt.contains("#EXT-X-TARGETDURATION");
             long dur = Math.max(1, System.currentTimeMillis() - tStart);
             long kbps = measureMs > 0 && got > 0 ? (got * 8L) / dur : 0;
-            boolean ok = code >= 200 && code < 400 && got > 0;
-            return "{\"ok\":" + ok + ",\"code\":" + code + ",\"type\":" + js(type) + ",\"bytes\":" + got
-                    + ",\"ms\":" + (first < 0 ? System.currentTimeMillis() - t0 : first) + ",\"kbps\":" + kbps + "}";
+            boolean ok = code >= 200 && code < 400 && got > 0 && (!txt.startsWith("#EXTM3U") || playlistOk);
+            String state;
+            if (ok) state = "ok";
+            else if (code == 404 || code == 410 || code == 400 || code == 451) state = "dead";
+            else if (code >= 200 && code < 300 && txt.startsWith("#EXTM3U") && !playlistOk) state = "dead";
+            else state = "busy";   // 401/403/429/458/5xx, empty body or slow start: try again before calling it dead
+            return "{\"ok\":" + ok + ",\"state\":\"" + state + "\",\"code\":" + code + ",\"type\":" + js(type) + ",\"bytes\":" + got
+                    + ",\"timeout\":" + timedOut + ",\"ms\":" + (first < 0 ? System.currentTimeMillis() - t0 : first) + ",\"kbps\":" + kbps + "}";
+        } catch (java.net.UnknownHostException | java.net.ConnectException e) {
+            return "{\"ok\":false,\"state\":\"dead\",\"code\":0,\"error\":" + js(String.valueOf(e.getMessage())) + ",\"ms\":" + (System.currentTimeMillis() - t0) + "}";
         } catch (Exception e) {
-            return "{\"ok\":false,\"code\":0,\"error\":" + js(String.valueOf(e.getMessage())) + ",\"ms\":"
+            return "{\"ok\":false,\"state\":\"busy\",\"code\":0,\"error\":" + js(String.valueOf(e.getMessage())) + ",\"ms\":"
                     + (System.currentTimeMillis() - t0) + "}";
+        } finally {
+            if (c != null) try { c.disconnect(); } catch (Exception ignored) { }
         }
     }
 
