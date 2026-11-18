@@ -1,10 +1,10 @@
 {
   "notes": [
-    "إصلاح: التطبيق يرجع يفتح لحاله بعد التثبيت بدل ما يطلعك للشاشة الرئيسية",
-    "التحديث يتحمّل تلقائياً عند فتح التطبيق — فقط اضغط «تحديث» في نافذة النظام"
+    "الفتح التلقائي بعد التحديث: فعّل «العرض فوق التطبيقات» مرة وحدة، وبعدها التطبيق يرجع يفتح لحاله بعد كل تحديث",
+    "التحديث يتحمّل تلقائياً — فقط اضغط «تحديث» في نافذة النظام"
   ],
   "notes_en": [
-    "Fix: the app now reopens by itself after installing instead of returning to the home screen",
-    "The update downloads automatically when the app opens — just press “Update” in the system window"
+    "Auto-reopen after updates: allow “Display over other apps” once, then the app reopens by itself after every update",
+    "Updates download automatically — just press “Update” in the system window"
   ]
 }

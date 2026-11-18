@@ -520,7 +520,7 @@
       if (ui.move) moveBy(d * 10); else { const pg = $('[data-act="page"][data-arg="' + (ui.page + d) + '"]'); if (pg) pg.click(); }
     } else if (k === 'menu') { const n = $('.nav.cur') || $('.nav'); n && n.focus(); }
   };
-  window.onAppResume = function () { refreshInfo().then(() => { if (ui.afterPerm && INFO.storage) { ui.afterPerm = false; ACT.browse(''); } }); };
+  window.onAppResume = function () { if (ui.ovWait) { ui.ovWait = false; setTimeout(() => ACT_EXTRA.ovGo(), 400); } refreshInfo().then(() => { if (ui.afterPerm && INFO.storage) { ui.afterPerm = false; ACT.browse(''); } }); };
 
   /* spatial navigation for the remote */
   function focusables() {
@@ -1499,6 +1499,18 @@
           <p class="mut"><b class="ltr">v${esc(String(rel.tag_name).replace(/^v/, ''))}</b> · ${L('نُشر في', 'Released')} ${esc(fmtDate(rel.published_at))} · ${L('نسختك', 'yours')} <span class="ltr">v${esc((INFO.app || {}).name || '')}</span></p></div>
           ${notes.length ? `<div class="notes nt">${notes.map(n => `<div>• ${esc(n)}</div>`).join('')}</div>` : ''}
           <div id="up-area"><div class="prog"><i id="up-b"></i></div><p id="up-t" class="mut">⬇ ${L('جاري تحميل التحديث تلقائياً…', 'Downloading the update automatically…')}</p></div>`);
+        let ov = 'ok'; try { ov = window.AndroidBridge && AndroidBridge.overlayState ? AndroidBridge.overlayState() : 'ok'; } catch (e) { }
+        if (ov === 'need' && !S.settings.ovSkip) {
+          // one-time: let the app reopen itself after every update (Android blocks it otherwise)
+          const a = $('#up-area');
+          if (a) {
+            a.innerHTML = `<p class="pvinfo">⚙️ ${L('خطوة مرة وحدة فقط: فعّل «العرض فوق التطبيقات» لتطبيق M3U عشان يرجع يفتح لحاله بعد كل تحديث.', 'One-time step: allow “Display over other apps” for M3U so it reopens by itself after every update.')}</p>
+              <p class="mut small">${L('بتنفتح الإعدادات: فعّل الخيار ثم اضغط رجوع، والتحديث يكمل تلقائياً.', 'Settings will open: turn it on, press Back, and the update continues automatically.')}</p>
+              <div class="bar end"><button class="btn pri big f auto" data-act="ovGrant">✅ ${L('تفعيل', 'Allow')}</button><button class="btn big auto" data-act="ovSkip">${L('تخطي', 'Skip')}</button></div>`;
+            const f = a.querySelector('.f'); if (f) f.focus();
+            return;
+          }
+        }
         ACT_EXTRA.doUpdate();      // start right away — the user only confirms the system install
       };
       show();
@@ -1515,10 +1527,13 @@
       if (ui.modal || ui.loading) return setTimeout(show, 3000);
       modal(`<div class="onb"><img src="icon.png" alt=""><h2>✨ ${L('ما الجديد في', "What's new in")} <span class="ltr">v${esc(a.name)}</span></h2></div>
         <div class="notes nt">${notes.map(n => `<div>• ${esc(n)}</div>`).join('')}</div>
-        <div class="bar end"><button class="btn pri f auto" data-act="closeModal">${L('تمام', 'Got it')}</button></div>`);
+        ${ovNeed() ? `<p class="pvinfo">⚙️ ${L('خطوة مرة وحدة فقط: فعّل «العرض فوق التطبيقات» لتطبيق M3U عشان يرجع يفتح لحاله بعد كل تحديث. فعّل الخيار ثم اضغط رجوع.', 'One-time step: allow “Display over other apps” for M3U so it reopens by itself after every update. Turn it on, then press Back.')}</p>
+        <div class="bar end"><button class="btn pri big f auto" data-act="ovOnly">✅ ${L('تفعيل', 'Allow')}</button><button class="btn big auto" data-act="ovLater">${L('لاحقاً', 'Later')}</button></div>`
+        : `<div class="bar end"><button class="btn pri f auto" data-act="closeModal">${L('تمام', 'Got it')}</button></div>`}`);
     };
     show();
   }
+  function ovNeed() { if (!IS_TV || S.settings.ovSkip) return false; try { return !!(window.AndroidBridge && AndroidBridge.overlayState && AndroidBridge.overlayState() === 'need'); } catch (e) { return false; } }
   ACT_EXTRA = {
     doUpdate: async () => {
       if (!ui.updUrl || ui.updBusy) return;
@@ -1548,6 +1563,18 @@
       ui.updBusy = false;
     },
     checkUpd: () => checkUpdate(true),
+    ovGrant: () => {
+      let ok = false; try { ok = AndroidBridge.overlayRequest(); } catch (e) { }
+      if (ok) ui.ovWait = true; else ACT_EXTRA.ovSkip();
+    },
+    ovOnly: () => { try { AndroidBridge.overlayRequest(); } catch (e) { } closeModal(); },
+    ovLater: () => { S.settings.ovSkip = true; save(); closeModal(); },
+    ovSkip: () => { S.settings.ovSkip = true; save(); ACT_EXTRA.ovGo(); },
+    ovGo: () => {
+      const a = $('#up-area');
+      if (a) a.innerHTML = `<div class="prog"><i id="up-b"></i></div><p id="up-t" class="mut">⬇ ${L('جاري تحميل التحديث تلقائياً…', 'Downloading the update automatically…')}</p>`;
+      ACT_EXTRA.doUpdate();
+    },
     pvPlay: async i => {
       const c = chAt(i);
       let j = { ok: false };

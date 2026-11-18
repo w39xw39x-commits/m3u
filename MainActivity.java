@@ -139,6 +139,32 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void previewClose() { runOnUiThread(() -> { if (pv != null && pv.isShowing()) pv.dismiss(); }); }
 
+        /** "ok" = may reopen itself after updates, "need" = user can allow it, "na" = not available on this device. */
+        @JavascriptInterface
+        public String overlayState() {
+            try {
+                if (Build.VERSION.SDK_INT < 29) return "ok";
+                if (Settings.canDrawOverlays(MainActivity.this)) return "ok";
+                Intent t = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + getPackageName()));
+                if (t.resolveActivity(getPackageManager()) != null) return "need";
+                t = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION);
+                if (t.resolveActivity(getPackageManager()) != null) return "need";
+            } catch (Throwable ignored) { }
+            return "na";
+        }
+
+        @JavascriptInterface
+        public boolean overlayRequest() {
+            Intent[] tries = new Intent[] {
+                new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + getPackageName())),
+                new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
+            };
+            for (Intent t : tries) {
+                try { t.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); startActivity(t); return true; } catch (Throwable ignored) { }
+            }
+            return false;
+        }
+
         private void send(String id, String text) {
             if (web != null) web.evaluateJavascript("window.onNativeInput&&window.onNativeInput(" + WebServer.js(id) + "," + WebServer.js(text) + ")", null);
         }
