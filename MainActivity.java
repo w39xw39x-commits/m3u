@@ -277,6 +277,18 @@ public class MainActivity extends Activity {
         if (web != null) web.evaluateJavascript("window.onPreviewAction&&window.onPreviewAction('" + action + "'," + info + ")", null);
     }
 
+    /** Reopens the app right after an update finished installing. */
+    public static class UpdatedReceiver extends BroadcastReceiver {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            try {
+                Intent i = new Intent(context, MainActivity.class);
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                context.startActivity(i);
+            } catch (Exception ignored) { }
+        }
+    }
+
     /** Result of the in-app updater (PackageInstaller). */
     public static class InstallReceiver extends BroadcastReceiver {
         @Override
@@ -551,6 +563,10 @@ public class MainActivity extends Activity {
             try {
                 PackageInstaller pi = ctx.getPackageManager().getPackageInstaller();
                 PackageInstaller.SessionParams params = new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+                // Android 12+: silent self-update when the system allows it (app is its own installer of record)
+                if (Build.VERSION.SDK_INT >= 31) {
+                    try { params.getClass().getMethod("setRequireUserAction", int.class).invoke(params, 2); } catch (Exception ignored) { }
+                }
                 int sid = pi.createSession(params);
                 PackageInstaller.Session session = pi.openSession(sid);
                 try (OutputStream o = session.openWrite("m3u.apk", 0, apk.length()); InputStream in = new FileInputStream(apk)) {

@@ -1,16 +1,12 @@
 {
   "notes": [
-    "معاينة أسرع: زر ▶ بجانب كل قناة يشغّلها مباشرة في مشغّل الفيديو",
-    "إصلاح: زر الرجوع من المشغّل لا يعيدك لأول القائمة",
-    "فحص الجودة الحقيقية: سرعة البث (Mbps) وتقدير الدقة 4K / FHD / HD",
-    "واجهة تملأ شاشة الجوال والتابلت مع شريط تنقل سفلي",
-    "الكتابة واللصق من الجوال تعمل بدون تعليق"
+    "التحديث يتحمّل تلقائياً عند فتح التطبيق — اضغط «تحديث» مرة واحدة فقط",
+    "إعادة فتح التطبيق تلقائياً بعد انتهاء التحديث",
+    "تحديث صامت بدون أي ضغطة على الأجهزة التي تدعم ذلك (أندرويد 12 فأعلى)"
   ],
   "notes_en": [
-    "Faster preview: a ▶ button next to every channel plays it right away",
-    "Fix: Back from the player no longer jumps to the top of the list",
-    "Real quality check: stream bitrate (Mbps) and estimated 4K / FHD / HD",
-    "Full-screen phone and tablet layout with a bottom navigation bar",
-    "Typing and pasting from the phone work smoothly"
+    "The update downloads by itself when the app opens — press “Update” just once",
+    "The app reopens automatically after updating",
+    "Fully silent updates on devices that support it (Android 12+)"
   ]
 }

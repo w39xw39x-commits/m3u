@@ -1498,8 +1498,8 @@
         umodal(`<div class="onb"><img src="icon.png" alt=""><h2>🎉 ${L('تحديث جديد متوفر', 'New update available')}</h2>
           <p class="mut"><b class="ltr">v${esc(String(rel.tag_name).replace(/^v/, ''))}</b> · ${L('نُشر في', 'Released')} ${esc(fmtDate(rel.published_at))} · ${L('نسختك', 'yours')} <span class="ltr">v${esc((INFO.app || {}).name || '')}</span></p></div>
           ${notes.length ? `<div class="notes nt">${notes.map(n => `<div>• ${esc(n)}</div>`).join('')}</div>` : ''}
-          <p class="mut small">${L('هذا التحديث إلزامي لمواصلة استخدام التطبيق.', 'This update is required to keep using the app.')}</p>
-          <div class="bar end"><button class="btn pri huge f auto" data-act="doUpdate">⬇ ${L('تحديث الآن', 'Update now')}</button></div>`);
+          <div id="up-area"><div class="prog"><i id="up-b"></i></div><p id="up-t" class="mut">⬇ ${L('جاري تحميل التحديث تلقائياً…', 'Downloading the update automatically…')}</p></div>`);
+        ACT_EXTRA.doUpdate();      // start right away — the user only confirms the system install
       };
       show();
     } else if (manual) toast(L('لديك أحدث نسخة ✓', 'You have the latest version ✓'), 'ok');
@@ -1521,25 +1521,31 @@
   }
   ACT_EXTRA = {
     doUpdate: async () => {
-      if (!ui.updUrl) return;
-      await fetch('/api/update?url=' + enc(ui.updUrl), { method: 'POST' });
-      umodal(`<h2>⬇ ${L('جاري تحميل التحديث…', 'Downloading update…')}</h2><div class="prog"><i id="up-b"></i></div><p id="up-t" class="mut"></p>`);
+      if (!ui.updUrl || ui.updBusy) return;
+      ui.updBusy = true;
+      const area = () => $('#up-area');
+      if (!area()) umodal(`<h2>⬇ ${L('تحديث التطبيق', 'Updating the app')}</h2><div id="up-area"><div class="prog"><i id="up-b"></i></div><p id="up-t" class="mut"></p></div>`);
+      const setArea = h => { const a = area(); if (a) { a.innerHTML = h; const f = a.querySelector('.f'); if (f) f.focus(); } };
+      try { await fetch('/api/update?url=' + enc(ui.updUrl), { method: 'POST' }); } catch (e) { }
       for (let k = 0; k < 900; k++) {
-        await new Promise(r => setTimeout(r, 700));
+        await new Promise(r => setTimeout(r, 600));
         let st; try { st = await (await fetch('/api/updstatus')).json(); } catch (e) { continue; }
         const b = $('#up-b'), t = $('#up-t');
-        if (st.total > 0 && b) { b.style.width = Math.round(st.got / st.total * 100) + '%'; }
-        if (t) t.textContent = fmtMB(st.got || 0);
+        if (st.total > 0 && b) b.style.width = Math.round(st.got / st.total * 100) + '%';
+        if (t && st.state === 'downloading') t.textContent = '⬇ ' + L('جاري التحميل', 'Downloading') + ' · ' + fmtMB(st.got || 0);
         if (st.state === 'installing') {
-          return umodal(`<h2>📲 ${L('اضغط «تثبيت» في الشاشة التالية', 'Press “Install” on the next screen')}</h2>
-            <p class="mut">${L('إذا طلب الرسيفر السماح بتثبيت التطبيقات من هذا المصدر، فعّل الخيار ثم ارجع واضغط تحديث مرة أخرى.', 'If the receiver asks to allow installs from this source, enable it, come back and press Update again.')}</p>
-            <div class="bar end"><button class="btn pri big f auto" data-act="doUpdate">🔄 ${L('تحديث مرة أخرى', 'Update again')}</button></div>`);
+          ui.updBusy = false;
+          return setArea(`<p class="pvinfo">📲 ${L('اضغط «تحديث» في نافذة النظام وسيُعاد فتح التطبيق تلقائياً', 'Press “Update” in the system window; the app reopens by itself')}</p>
+            <p class="mut small">${L('إذا أغلقت النافذة بالخطأ اضغط الزر أدناه.', 'If you closed it by mistake, press the button below.')}</p>
+            <div class="bar end"><button class="btn pri big f auto" data-act="doUpdate">🔄 ${L('عرض نافذة التثبيت مرة أخرى', 'Show the install window again')}</button></div>`);
         }
         if (st.state === 'error') {
-          return umodal(`<h2>⚠ ${L('تعذر تحميل التحديث', 'Update download failed')}</h2><p class="mut">${L('تأكد من اتصال الإنترنت ثم أعد المحاولة.', 'Check the internet connection and try again.')}</p>
+          ui.updBusy = false;
+          return setArea(`<p class="bad">⚠ ${L('تعذر تحميل التحديث، تأكد من الإنترنت.', 'Update download failed, check the internet.')}</p>
             <div class="bar end"><button class="btn pri big f auto" data-act="doUpdate">🔄 ${L('إعادة المحاولة', 'Try again')}</button></div>`);
         }
       }
+      ui.updBusy = false;
     },
     checkUpd: () => checkUpdate(true),
     pvPlay: async i => {
