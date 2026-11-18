@@ -71,10 +71,12 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         current = this;
-        if (server == null) {
-            server = new WebServer(new AppHost(getApplicationContext()));
-            server.start(8686, 8687, 8688, 18686, 28686);
-        }
+        ensureServer(getApplicationContext());
+        // keep the server alive while the user works from a phone and the TV shows another app
+        try {
+            Intent svc = new Intent(this, ServerService.class);
+            startService(svc);   // app is in the foreground here; the service promotes itself with startForeground()
+        } catch (Throwable ignored) { }
 
         web = new WebView(this);
         web.setBackgroundColor(Color.parseColor("#0b0f19"));
@@ -98,6 +100,13 @@ public class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 23
                 && checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE, Manifest.permission.READ_EXTERNAL_STORAGE}, 1);
+        }
+    }
+
+    static synchronized void ensureServer(Context app) {
+        if (server == null) {
+            server = new WebServer(new AppHost(app));
+            server.start(8686, 8687, 8688, 18686, 28686);
         }
     }
 
@@ -543,6 +552,10 @@ public class MainActivity extends Activity {
             }
         }
 
+        @Override public void scanFile(String path) {
+            try { android.media.MediaScannerConnection.scanFile(ctx, new String[]{path}, new String[]{"audio/x-mpegurl"}, null); } catch (Throwable ignored) { }
+        }
+
         @Override public String mediaStoreSave(String name, byte[] data) {
             if (Build.VERSION.SDK_INT < 29) return null;
             ContentResolver cr = ctx.getContentResolver();
@@ -627,5 +640,33 @@ public class MainActivity extends Activity {
         @Override public String deviceName() {
             return Build.MANUFACTURER + " " + Build.MODEL + " · Android " + Build.VERSION.RELEASE;
         }
+    }
+
+    public static class ServerService extends android.app.Service {
+        private static final String CH = "m3u_server";
+
+        @Override
+        public int onStartCommand(Intent intent, int flags, int startId) {
+            MainActivity.ensureServer(getApplicationContext());
+            try {
+                android.app.Notification.Builder b;
+                if (Build.VERSION.SDK_INT >= 26) {
+                    android.app.NotificationManager nm = (android.app.NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+                    if (nm != null) nm.createNotificationChannel(new android.app.NotificationChannel(CH, "M3U", android.app.NotificationManager.IMPORTANCE_MIN));
+                    b = new android.app.Notification.Builder(this, CH);
+                } else {
+                    b = new android.app.Notification.Builder(this);
+                }
+                Intent open = new Intent(this, MainActivity.class);
+                PendingIntent pi = PendingIntent.getActivity(this, 1, open, PendingIntent.FLAG_UPDATE_CURRENT | 0x04000000);
+                b.setContentTitle("M3U").setContentText("جاهز للتحكم من الجوال").setSmallIcon(getApplicationInfo().icon)
+                 .setContentIntent(pi).setOngoing(true);
+                startForeground(8686, b.build());
+            } catch (Throwable ignored) { }
+            return START_STICKY;
+        }
+
+        @Override
+        public android.os.IBinder onBind(Intent intent) { return null; }
     }
 }

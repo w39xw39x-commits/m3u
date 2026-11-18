@@ -35,7 +35,15 @@ public class WebServer {
         String appVersionJson();
         /** Hands a downloaded APK to the system installer. */
         boolean installApk(File apk);
+        /** Make a written file visible to other apps / file managers right away. */
+        default void scanFile(String path) { }
     }
+
+    /** Last list saved through /api/export (shown on the TV when it came from a phone/PC). */
+    static volatile long lastExportAt = 0;
+    static volatile String lastExportName = "";
+    static volatile boolean lastExportRemote = false;
+    static volatile int lastExportCount = 0;
 
     private final Map<String, Object> upd = new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -140,10 +148,13 @@ public class WebServer {
             }
             path = dec(path);
             if ("OPTIONS".equals(method)) { send(out, 204, "text/plain", new byte[0]); return; }
+            REMOTE.set(!s.getInetAddress().isLoopbackAddress());
             route(method, path, q, body, out);
             out.flush();
         } catch (Exception ignored) { }
     }
+
+    private static final ThreadLocal<Boolean> REMOTE = new ThreadLocal<>();
 
     private static String dec(String s) {
         try { return URLDecoder.decode(s, "UTF-8"); } catch (Exception e) { return s; }
@@ -299,7 +310,8 @@ public class WebServer {
         File pl = new File(host.dataDir(), "playlist.m3u");
         return "{\"version\":" + js(VERSION) + ",\"port\":" + port + ",\"ips\":" + ips + ",\"exportDirs\":" + dirs
                 + ",\"storage\":" + host.hasStoragePermission() + ",\"device\":" + js(host.deviceName())
-                + ",\"playlist\":" + (pl.exists() ? pl.length() : -1) + ",\"app\":" + host.appVersionJson() + "}";
+                + ",\"playlist\":" + (pl.exists() ? pl.length() : -1) + ",\"app\":" + host.appVersionJson()
+                + ",\"lastExport\":{\"t\":" + lastExportAt + ",\"name\":" + js(lastExportName) + ",\"remote\":" + lastExportRemote + ",\"count\":" + lastExportCount + "}}";
     }
 
     private File cacheFile(String id) {
@@ -525,6 +537,8 @@ public class WebServer {
                     String key = f.getCanonicalPath();
                     if (done.contains(key)) { okPath = ""; break; }
                     try (FileOutputStream fo = new FileOutputStream(f)) { fo.write(body); fo.getFD().sync(); }
+                    if (!f.exists() || f.length() != body.length) throw new IOException("verify failed");
+                    try { host.scanFile(f.getAbsolutePath()); } catch (Exception ignored) { }
                     done.add(key);
                     okPath = f.getAbsolutePath();
                     break;
@@ -547,7 +561,14 @@ public class WebServer {
         }
         saved.append(']');
         failed.append(']');
-        return "{\"ok\":true,\"name\":" + js(name) + ",\"size\":" + body.length + ",\"saved\":" + saved + ",\"failed\":" + failed + "}";
+        if (!fs) {
+            lastExportAt = System.currentTimeMillis();
+            lastExportName = name;
+            lastExportRemote = Boolean.TRUE.equals(REMOTE.get());
+            int n = 0; for (byte c : body) if (c == '\n') n++;
+            lastExportCount = n / 2;
+        }
+        return "{\"ok\":" + (!fs) + ",\"name\":" + js(name) + ",\"size\":" + body.length + ",\"saved\":" + saved + ",\"failed\":" + failed + "}";
     }
 
     // ------------------------------------------------------------------ static files
@@ -565,7 +586,18 @@ public class WebServer {
             int r;
             while ((r = in.read(buf)) != -1) b.write(buf, 0, r);
         }
-        send(out, 200, mime(rel), b.toByteArray());
+        byte[] data = b.toByteArray();
+        if (rel.equals("index.html")) {
+            String v = String.valueOf(System.identityHashCode(this)) + "-" + verCode();
+            String html = new String(data, StandardCharsets.UTF_8)
+                    .replace("app.css\"", "app.css?v=" + v + "\"").replace("app.js\"", "app.js?v=" + v + "\"").replace("i18n.js\"", "i18n.js?v=" + v + "\"");
+            data = html.getBytes(StandardCharsets.UTF_8);
+        }
+        send(out, 200, mime(rel), data);
+    }
+
+    private String verCode() {
+        try { String j = host.appVersionJson(); int i = j.indexOf("\"code\":"); return j.substring(i + 7).replaceAll("[^0-9].*$", ""); } catch (Exception e) { return "0"; }
     }
 
     private static String mime(String p) {

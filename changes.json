@@ -1,8 +1,16 @@
 {
   "notes": [
-    "تحديث تجريبي: التأكد من إن التطبيق يرجع يفتح لحاله بعد التثبيت"
+    "التحكم من الجوال: الكتابة تشتغل في كل الخانات على كل الجوالات",
+    "الإرسال من الجوال: تأكيد واضح إن القائمة وصلت للرسيفر، ورسالة تطلع على شاشة الرسيفر",
+    "التطبيق يبقى شغّال في الخلفية عشان الجوال ما ينقطع عن الرسيفر",
+    "الملف يظهر مباشرة في Download وفي IP Channels بعد الحفظ",
+    "صفحة الجوال تتحدّث لحالها إذا تحدّث التطبيق في الرسيفر"
   ],
   "notes_en": [
-    "Test update: checking that the app reopens by itself after installing"
+    "Phone control: typing works in every field on every phone",
+    "Sending from the phone: clear confirmation that the list reached the receiver, plus a message on the TV",
+    "The app keeps running in the background so the phone stays connected",
+    "The file shows up right away in Download and in IP Channels",
+    "The phone page refreshes itself when the receiver app updates"
   ]
 }

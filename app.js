@@ -588,7 +588,16 @@
 
   /* inputs on the TV: arrows pass over them, OK opens the keyboard */
   function lockInputs(root) {
-    if (!IS_TV) return;
+    if (!IS_TV) {
+      (root || document).querySelectorAll('input').forEach(i => {
+        i.readOnly = false; i.removeAttribute('readonly');
+        if (!['checkbox', 'file', 'button', 'number'].includes(i.type)) {
+          i.setAttribute('autocomplete', 'off'); i.setAttribute('autocorrect', 'off'); i.setAttribute('autocapitalize', 'off'); i.setAttribute('spellcheck', 'false');
+          if (/url|host|server/i.test(i.id + ' ' + (i.placeholder || ''))) i.setAttribute('inputmode', 'url');
+        }
+      });
+      return;
+    }
     (root || document).querySelectorAll('input.in').forEach(i => { if (!i.dataset.edit) i.readOnly = true; });
   }
   function editInput(i) {
@@ -663,6 +672,7 @@
   function navOf(v) { return { pack: 'packs', group: 'browse' }[v] || v; }
   function restoreFocus(reset) {
     if (ui.modal) return;
+    if (!IS_TV) { const a = document.activeElement; if (a && a.tagName === 'INPUT' && document.contains(a)) return; if (!lastFid) return; }
     let el = null;
     if (lastFid) el = [...document.querySelectorAll('[data-fid]')].find(e => e.dataset.fid === lastFid);
     if (!el && reset) el = $('#main .auto') || $('#main .f');
@@ -928,7 +938,7 @@
     return `${permBox}<div class="card send">
         <div class="sendrow"><div class="sendinfo"><b class="ltr">${fmtN(b.count)}</b> <span>${L('قناة في ' + fmtN(b.per.length) + ' باقة', 'channels in ' + fmtN(b.per.length) + ' packages')} · <span class="ltr">${fmtMB(sz)}</span></span></div>
         <button class="btn pri huge f auto" data-act="doExport" data-fid="ex-go">🚀 حفظ القائمة وإرسالها إلى الرسيفر</button></div>
-        ${IS_TV ? '' : '<button class="btn f" data-act="download" data-fid="ex-dl">⬇ تنزيل الملف على الكمبيوتر</button>'}
+        ${IS_TV ? '' : `<p class="mut small" style="margin-top:10px">${L('الزر الكبير يحفظ القائمة مباشرة في الرسيفر.', 'The big button saves the list straight to the receiver.')} <button class="btn sm f" data-act="download" data-fid="ex-dl">⬇ ${L('نسخة احتياطية على هذا الجهاز', 'Backup copy on this device')}</button></p>`}
         ${b.count > 5000 ? '<p class="warnbox">⚠ عدد كبير من القنوات؛ إذا رفض الرسيفر الاستيراد قلّل الباقات المفعّلة.</p>' : ''}
         ${result}</div>
       <div class="grid-ex">
@@ -981,7 +991,7 @@
     translate(m);
     lockInputs(m);
     const f = m.querySelector('.auto') || m.querySelector('.f');
-    if (f) setTimeout(() => f.focus(), 30);
+    if (f && (IS_TV || f.tagName !== 'INPUT')) setTimeout(() => f.focus({ preventScroll: !IS_TV }), 30);
   }
   function closeModal() {
     if (ui.forced && !ui.forceClose) return;
@@ -1294,15 +1304,42 @@
     doExport: async () => {
       const b = buildM3U();
       if (!b.count) return toast('لا توجد قنوات؛ فعّل باقة واحدة على الأقل', 'bad');
-      toast('جاري الحفظ…');
-      try {
-        const r = await (await fetch('/api/export?name=' + enc(cfg().opt.fname || 'M3U_TV'), { method: 'POST', body: b.text })).json();
-        ui.exportRes = { saved: r.saved || [], failed: r.failed || [], count: b.count };
-        render();
-        toast(r.saved && r.saved.length ? L('تم الحفظ ✓ — افتح بحث قنوات IP في الرسيفر', 'Saved ✓ — open IP channel search on the receiver') : 'تعذر الحفظ؛ امنح صلاحية التخزين', r.saved && r.saved.length ? 'ok' : 'bad');
-        if (!INFO.storage && !(r.saved || []).length) ACT.perm();
-      } catch (e) { toast('خطأ في الحفظ', 'bad'); }
+      if (ui.exporting) return;
+      ui.exporting = true;
+      toast(IS_TV ? 'جاري الحفظ…' : L('جاري الإرسال للرسيفر…', 'Sending to the receiver…'));
+      let r = null;
+      for (let k = 0; k < 3 && !r; k++) {
+        try {
+          const res = await fetch('/api/export?name=' + enc(cfg().opt.fname || 'M3U_TV') + '&t=' + Date.now(), { method: 'POST', body: b.text, cache: 'no-store' });
+          r = await res.json();
+        } catch (e) { await new Promise(z => setTimeout(z, 1200)); }
+      }
+      ui.exporting = false;
+      if (!r) {
+        if (!IS_TV) return modal(`<h2>⚠ ${L('ما وصلت القائمة للرسيفر', 'The list did not reach the receiver')}</h2>
+          <p class="mut">${L('تأكد إن تطبيق M3U مفتوح في الرسيفر وإن الجوال على نفس شبكة الواي فاي، ثم حاول مرة ثانية.', 'Make sure M3U is open on the receiver and the phone is on the same Wi-Fi, then try again.')}</p>
+          <div class="bar end"><button class="btn f" data-act="closeModal">${L('إغلاق', 'Close')}</button><button class="btn pri f auto" data-act="doExportRetry">🔄 ${L('إعادة الإرسال', 'Send again')}</button></div>`);
+        return toast('خطأ في الحفظ', 'bad');
+      }
+      ui.exportRes = { saved: r.saved || [], failed: r.failed || [], count: b.count };
+      const ok = (r.saved || []).length > 0;
+      render();
+      if (!ok && !INFO.storage) ACT.perm();
+      if (!IS_TV) {
+        const fn = esc(cfg().opt.fname || 'M3U_TV') + '.m3u';
+        modal(ok ? `<div class="onb"><h2>✅ ${L('وصلت القائمة للرسيفر', 'The list is on the receiver')}</h2>
+            <p class="mut">${fmtN(b.count)} ${L('قناة · محفوظة في الرسيفر باسم', 'channels · saved on the receiver as')} <b class="ltr nt">${fn}</b></p></div>
+            <div class="tigersteps"><b>${L('الحين من ريموت الرسيفر:', 'Now with the receiver remote:')}</b>
+            <span>Menu</span>›<span>${L('التركيب', 'Installation')}</span>›<span>${L('بحث قنوات IP', 'IP channel search')}</span>›<span>${L('اختر ملف', 'Select file')}: <b class="ltr nt">Local(${fn})</b></span>›<span>${L('بدء البحث', 'Start search')}</span></div>
+            <div class="bar end"><button class="btn pri f auto" data-act="closeModal">${L('تمام', 'OK')}</button></div>`
+          : `<h2>⚠ ${L('الرسيفر ما قدر يحفظ الملف', 'The receiver could not save the file')}</h2><p class="mut">${L('افتح تطبيق M3U في الرسيفر ووافق على صلاحية التخزين، ثم أعد الإرسال.', 'Open M3U on the receiver and allow storage access, then send again.')}</p>
+            <div class="bar end"><button class="btn f" data-act="closeModal">${L('إغلاق', 'Close')}</button><button class="btn pri f auto" data-act="doExportRetry">🔄 ${L('إعادة الإرسال', 'Send again')}</button></div>`);
+      } else {
+        toast(ok ? L('تم الحفظ ✓ — افتح بحث قنوات IP في الرسيفر', 'Saved ✓ — open IP channel search on the receiver') : 'تعذر الحفظ؛ امنح صلاحية التخزين', ok ? 'ok' : 'bad');
+      }
+      ui.seenExport = (INFO.lastExport || {}).t;
     },
+    doExportRetry: () => { closeModal(); setTimeout(() => ACT.doExport(), 50); },
     download: () => {
       const b = buildM3U(), a = document.createElement('a');
       a.href = URL.createObjectURL(new Blob([b.text], { type: 'audio/x-mpegurl' }));
@@ -1608,6 +1645,36 @@
     checkUpdate(false);
     setTimeout(() => { if (!ui.forced) whatsNew(); }, 2500);
   }
+  /* live link between the TV and phones / PCs */
+  let liveFails = 0;
+  async function liveTick() {
+    let j = null;
+    try { j = await (await fetch('/api/info?t=' + Date.now(), { cache: 'no-store' })).json(); } catch (e) { }
+    if (!j) {
+      liveFails++;
+      if (!IS_TV && liveFails === 2) toast(L('⚠ انقطع الاتصال بالرسيفر — تأكد إن تطبيق M3U مفتوح فيه', '⚠ Lost the receiver — make sure M3U is open on it'), 'bad');
+      return;
+    }
+    const was = liveFails; liveFails = 0;
+    const oldCode = (INFO.app || {}).code, newCode = (j.app || {}).code;
+    if (!IS_TV && oldCode && newCode && oldCode !== newCode && !document.querySelector('input:focus')) { location.reload(); return; }
+    if (!IS_TV && was >= 2) toast(L('✓ رجع الاتصال بالرسيفر', '✓ Receiver connected again'), 'ok');
+    const le = j.lastExport || {};
+    if (IS_TV && le.t && le.remote && ui.seenExport !== undefined && le.t !== ui.seenExport && !ui.forced) {
+      ui.seenExport = le.t;
+      const fn = esc(le.name || 'M3U_TV.m3u');
+      modal(`<div class="onb"><h2>📱 ${L('وصلت قائمة جديدة من الجوال', 'A new list arrived from the phone')}</h2>
+        <p class="mut">${le.count ? fmtN(le.count) + ' ' + L('قناة · ', 'channels · ') : ''}${L('محفوظة في Download باسم', 'saved in Download as')} <b class="ltr nt">${fn}</b></p></div>
+        <div class="tigersteps"><span>Menu</span>›<span>${L('التركيب', 'Installation')}</span>›<span>${L('بحث قنوات IP', 'IP channel search')}</span>›<span>${L('اختر ملف', 'Select file')}: <b class="ltr nt">Local(${fn})</b></span></div>
+        <div class="bar end">${S.settings.targetPkg ? `<button class="btn f" data-act="launchTarget">📺 ${L('افتح', 'Open')} ${esc(S.settings.targetLabel)}</button>` : ''}<button class="btn pri f auto" data-act="closeModal">${L('تمام', 'OK')}</button></div>`);
+      S.settings && (async () => { try { const st = await (await fetch('/api/state')).json(); if (st && st.sources) { S = Object.assign(S, st); } } catch (e) { } })();
+    } else if (ui.seenExport === undefined) ui.seenExport = le.t || 0;
+    INFO = Object.assign(INFO, j);
+  }
+  setInterval(liveTick, IS_TV ? 4000 : 8000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) liveTick(); });
+  if (!IS_TV) document.addEventListener('touchstart', e => { const i = e.target.closest && e.target.closest('input'); if (i && i.readOnly) { i.readOnly = false; i.removeAttribute('readonly'); } }, { passive: true, capture: true });
+
   init();
   window.__m3u = { parseM3U, setChannels, computeAll, buildM3U, cfg, S: () => S, cleanName, detectLink, CH: () => CH };
 })();
