@@ -1,18 +1,18 @@
 {
   "notes": [
-    "تحديث تلقائي من داخل التطبيق بضغطة زر، بدون Downloader",
-    "إصلاح الكتابة بالريموت والجوال: نافذة كتابة واضحة عند الضغط على OK",
-    "خيار «كما هو من المزود» مع إمكانية حذف وإضافة الباقات",
-    "سرعة عالية للقوائم الكبيرة (حتى 60,000 قناة)",
-    "حفظ الملف مباشرة في Download لبحث قنوات IP في الرسيفر",
-    "تنقل أسهل بالريموت في كل الشاشات"
+    "جديد: معاينة القنوات داخل التطبيق مع الجودة الحقيقية (الدقة وسرعة التشغيل)، واحذف أو أبقِ القناة بضغطة",
+    "الكتابة واللصق من الجوال تعمل بدون أي تعليق",
+    "نافذة التحديث الإجباري تظهر على شاشة الرسيفر فقط، ولا تمنع الجوال من الكتابة",
+    "واجهة أخف وأوضح عند الفتح من الجوال",
+    "واجهة تملأ شاشة الجوال والتابلت بالكامل مع شريط تنقل سفلي",
+    "إظهار رقم النسخة الصحيح في القائمة"
   ],
   "notes_en": [
-    "One-tap in-app updates, no Downloader needed",
-    "Typing fixed for remote and phone: a clear typing box on OK",
-    "\"As the provider has it\" mode, with add/delete packages",
-    "Much faster with big lists (up to 60,000 channels)",
-    "File saved straight to Download for the receiver's IP channel search",
-    "Easier remote navigation on every screen"
+    "New: in-app channel preview with real quality (resolution and start time), keep or delete in one tap",
+    "Typing and pasting from the phone work smoothly",
+    "The mandatory update window shows only on the receiver screen and never blocks the phone",
+    "Lighter, clearer layout when opened from a phone",
+    "Full-screen phone and tablet layout with a bottom navigation bar",
+    "Correct version number shown in the menu"
   ]
 }

@@ -672,7 +672,7 @@
   function renderSide() {
     const ip = (INFO.ips || [])[0];
     $('#sideinfo').innerHTML = `<button class="btn sm f themebtn" data-act="themeToggle" data-fid="theme" title="تبديل المظهر">${document.documentElement.dataset.theme === 'light' ? '🌙 ليلي' : '☀️ نهاري'}</button>` + (ip && INFO.port ? `<div class="pc">💻 تحكم من الكمبيوتر<b class="ltr">http://${esc(ip)}:${INFO.port}</b></div>` : '') +
-      `<div class="ver">M3U v${esc(INFO.version || '1.0')}</div>`;
+      `<div class="ver">M3U v${esc((INFO.app || {}).name || INFO.version || '')}</div>`;
   }
   function topHtml() {
     const s = src();
@@ -718,6 +718,13 @@
   function needSource() {
     return `<div class="empty"><div class="big">📡</div><h2>لا توجد قنوات بعد</h2><p class="mut">أضف رابط اشتراكك أو ملف M3U للبدء</p>
       <button class="btn pri f auto" data-act="go" data-arg="subs">إضافة اشتراك</button></div>`;
+  }
+  const realQ = h => h >= 2000 ? '4K' : h >= 1000 ? '1080p' : h >= 700 ? '720p' : h > 0 ? h + 'p' : '';
+  function qualTag(c) {
+    const qi = (cfg().qi || {})[c.k];
+    if (qi && qi.fail) return '<span class="tag qx">✕</span>';
+    if (qi && qi.h) return `<span class="tag qreal ${qi.h >= 2000 ? 'q4' : qi.h >= 1000 ? 'q3' : qi.h >= 700 ? 'q2' : ''}">${realQ(qi.h)} ✓</span>`;
+    return qTag(c.q);
   }
   const qTag = q => q === 4 ? '<span class="tag q4">4K</span>' : q === 3 ? '<span class="tag q3">FHD</span>' : q === 2 ? '<span class="tag q2">HD</span>' : '';
   const logo = c => `<span class="logo">${c.l ? `<img loading="lazy" src="${esc(c.l)}" onerror="this.remove()">` : ''}<b>${esc(dispName(c).slice(0, 2))}</b></span>`;
@@ -829,7 +836,7 @@
       : `<button class="rowmain f" data-act="chMenu" data-arg="${c.i}" data-fid="${fid}">`;
     return `<div class="row ${mv ? 'moving' : ''}" draggable="${mode === 'pack' && !IS_TV && !ui.q}" data-drag="ch:${c.i}">
       <span class="num">${idx + 1}</span>${main}${logo(c)}
-      <span class="nm nt"><b>${esc(dispName(c))}</b>${qTag(c.q)}<small>${esc(c.g)}</small></span></button>${acts}</div>`;
+      <span class="nm nt"><b>${esc(dispName(c))}</b>${qualTag(c)}<small>${esc(c.g)}</small></span></button>${acts}</div>`;
   }
 
   VIEWS.pack = function () {
@@ -847,6 +854,7 @@
           <button class="sw f ${pk.on ? 'on' : ''}" data-act="pkToggle" data-arg="${pk.id}" data-fid="ph-on"><i></i></button>
           <button class="btn f" data-act="pkAddCh" data-arg="${pk.id}" data-fid="ph-add">＋ إضافة قنوات</button>
           <button class="btn f" data-act="pkSort" data-arg="${pk.id}" data-fid="ph-sort">⇅ ترتيب تلقائي</button>
+          <button class="btn pri f" data-act="pvStart" data-arg="${pk.id}" data-fid="ph-pv">👁 معاينة القنوات</button>
           <button class="btn f" data-act="pkProbe" data-arg="${pk.id}" data-fid="ph-probe">🩺 فحص القنوات</button>
           <button class="btn f" data-act="pkEdit" data-arg="${pk.id}" data-fid="ph-edit">✎ الإعدادات</button>
         </div></div>
@@ -956,7 +964,7 @@
       <div class="card"><h2>التحديثات</h2><div class="opt"><span>${L('النسخة الحالية', 'Current version')} <b class="ltr">v${esc((INFO.app || {}).name || INFO.version || '')}</b></span>
         <button class="btn f" data-act="checkUpd" data-fid="st-upd">🔄 ${L('التحقق من التحديثات', 'Check for updates')}</button></div>
         <div class="hint">${L('التطبيق يتحقق تلقائياً عند كل تشغيل، ويثبّت التحديث بضغطة بدون Downloader.', 'The app checks on every launch and installs updates in one tap, no Downloader needed.')}</div></div>
-      <div class="card"><h2>عن التطبيق</h2><p class="mut">M3U v${esc(INFO.version || '')} · ${esc(INFO.device || '')}</p></div>`;
+      <div class="card"><h2>عن التطبيق</h2><p class="mut">M3U v${esc((INFO.app || {}).name || INFO.version || '')} · ${esc(INFO.device || '')}</p></div>`;
   };
 
   /* ---------------------------------------------------------------- modal / toast */
@@ -973,6 +981,7 @@
   }
   function closeModal() {
     if (ui.forced && !ui.forceClose) return;
+    if ($('#pv')) { stopVideo(); if (PV.list && !ui.forceClose) PV.list = null; }
     ui.modal = null;
     $('#modal').classList.add('hidden');
     $('#modal').innerHTML = '';
@@ -995,7 +1004,8 @@
       <div class="bar"><input class="in rtl f" id="m-name" value="${esc(dispName(c))}"><button class="btn f" data-act="mRename" data-arg="${c.i}">حفظ</button></div>
       <label class="fl">الباقات (اضغط للإضافة/الإزالة)</label><div class="pkpicks">${btns}</div>
       <div class="bar">
-        <button class="btn f" data-act="mPlay" data-arg="${c.i}">▶ تشغيل للتجربة</button>
+        <button class="btn pri f" data-act="pvOne" data-arg="${c.i}">👁 معاينة وجودة</button>
+        <button class="btn f" data-act="mPlay" data-arg="${c.i}">▶ تشغيل في مشغّل خارجي</button>
         <button class="btn f" data-act="mProbe" data-arg="${c.i}">🩺 فحص الرابط</button>
         ${ui.view === 'pack' && !ui.showRem ? `<button class="btn f" data-act="mPos" data-arg="${c.i}">#️⃣ نقل إلى رقم</button>` : ''}
         <span id="m-probe" class="mut"></span></div>
@@ -1373,6 +1383,76 @@
     changed(); render();
   });
 
+  /* ---------------------------------------------------------------- preview */
+  const PV = { list: null, i: 0, pk: null, tried: false };
+  function altUrl(u) {
+    if (/\/live\/[^/]+\/[^/]+\/\d+\.ts(\?|$)/i.test(u)) return u.replace(/\.ts(\?|$)/i, '.m3u8$1');
+    if (/\/live\/[^/]+\/[^/]+\/\d+\.m3u8(\?|$)/i.test(u)) return u.replace(/\.m3u8(\?|$)/i, '.ts$1');
+    return '';
+  }
+  function previewStart(list, i, pkId) {
+    if (!list || !list.length) return toast('لا توجد قنوات للمعاينة', 'bad');
+    PV.list = list.slice(); PV.i = Math.max(0, Math.min(i || 0, list.length - 1)); PV.pk = pkId || null;
+    previewShow();
+  }
+  function previewShow() {
+    const c = PV.list && PV.list[PV.i];
+    if (!c) { previewEnd(); return toast(L('انتهت المعاينة ✓', 'Preview finished ✓'), 'ok'); }
+    const pos = (PV.i + 1) + ' / ' + PV.list.length;
+    if (IS_TV && window.AndroidBridge && AndroidBridge.preview) {
+      AndroidBridge.preview(JSON.stringify({ url: c.u, alt: altUrl(c.u), name: dispName(c), pos, lang: EN() ? 'en' : 'ar' }));
+      return;
+    }
+    // phone / PC browser: HTML5 video (HLS where the browser supports it)
+    const a = altUrl(c.u), first = /\.m3u8/i.test(c.u) ? c.u : (a && /\.m3u8/i.test(a) ? a : c.u);
+    PV.tried = false; PV.t0 = performance.now(); PV.info = { w: 0, h: 0, ms: -1, fail: false };
+    ui.forceClose = true; closeModal(); ui.forceClose = false;
+    modal(`<h2 class="nt">${esc(dispName(c))} <span class="mut small ltr">${pos}</span></h2>
+      <video id="pv" autoplay muted playsinline controls style="width:100%;aspect-ratio:16/9;background:#000;border-radius:12px"></video>
+      <p id="pv-info" class="pvinfo">⏳ ${L('جاري التشغيل…', 'Loading…')}</p>
+      <p class="mut small">${L('المعاينة تستخدم اتصالاً واحداً من اشتراكك.', 'Preview uses one connection of your subscription.')}</p>
+      <div class="bar end"><button class="btn f" data-act="pvAct" data-arg="prev">› ${L('السابقة', 'Back')}</button>
+        <button class="btn danger f" data-act="pvAct" data-arg="delete">🗑 ${L('احذفها', 'Delete')}</button>
+        <button class="btn pri f auto" data-act="pvAct" data-arg="keep">✓ ${L('أبقِها', 'Keep')}</button>
+        <button class="btn f" data-act="pvAct" data-arg="close">✕</button></div>`);
+    const v = $('#pv'), info = $('#pv-info');
+    const upd = () => {
+      const I = PV.info;
+      if (I.fail) info.innerHTML = `<span class="bad">✕ ${L('لا تعمل في المتصفح — جرّب المعاينة من شاشة الرسيفر', "Can't play in the browser — try preview on the receiver")}</span>`;
+      else if (I.h) info.textContent = `${I.w}×${I.h} · ${I.h >= 2000 ? '4K UHD' : I.h >= 1000 ? 'FHD 1080p' : I.h >= 700 ? 'HD 720p' : 'SD ' + I.h + 'p'}${I.ms >= 0 ? ' · ' + L('بدأت خلال ', 'started in ') + (I.ms / 1000).toFixed(1) + L(' ث', 's') : ''}`;
+    };
+    v.onloadedmetadata = () => { PV.info.w = v.videoWidth; PV.info.h = v.videoHeight; upd(); };
+    v.onplaying = () => { if (PV.info.ms < 0) { PV.info.ms = Math.round(performance.now() - PV.t0); upd(); saveQ(c, PV.info); } };
+    v.onerror = () => {
+      const other = first === c.u ? a : c.u;
+      if (!PV.tried && other) { PV.tried = true; v.src = other; v.play().catch(() => { }); }
+      else { PV.info.fail = true; upd(); saveQ(c, PV.info); }
+    };
+    v.src = first; v.play().catch(() => { });
+  }
+  function saveQ(c, I) { const qi = cfg().qi || (cfg().qi = {}); if (I.h || I.fail) { qi[c.k] = { w: I.w, h: I.h, ms: I.ms, fail: !!I.fail && !I.h }; save(); } }
+  function stopVideo() { const v = $('#pv'); if (v) { try { v.pause(); v.removeAttribute('src'); v.load(); } catch (e) { } } }
+  function previewEnd() {
+    PV.list = null; stopVideo();
+    if (window.AndroidBridge && AndroidBridge.previewClose && IS_TV) AndroidBridge.previewClose();
+    ui.forceClose = true; if (ui.modal) closeModal(); ui.forceClose = false;
+    render();
+  }
+  window.onPreviewAction = function (a, info) {
+    if (!PV.list) return;
+    const c = PV.list[PV.i];
+    if (c && info && (info.h || info.fail)) saveQ(c, info);
+    if (a === 'info') { return; }
+    stopVideo();
+    if (a === 'keep' || a === 'next') { PV.i++; previewShow(); }
+    else if (a === 'prev') { PV.i = Math.max(0, PV.i - 1); previewShow(); }
+    else if (a === 'delete') {
+      const pk = PV.pk ? pkById(PV.pk) : null;
+      if (pk && c) { removeFrom(pk, c); toast(L('حُذفت ', 'Deleted ') + dispName(c)); }
+      PV.list.splice(PV.i, 1); previewShow();
+    } else if (a === 'close') { PV.list = null; ui.forceClose = true; if (ui.modal) closeModal(); ui.forceClose = false; render(); }
+  };
+
   /* ---------------------------------------------------------------- updates */
   const REPO = 'w39xw39x-commits/m3u';
   async function getNotes() {
@@ -1393,6 +1473,11 @@
     const asset = (rel.assets || []).find(a => /\.apk$/i.test(a.name));
     if (code > cur && asset) {
       const notes = await getNotes();
+      if (!IS_TV) {   // phone / PC browser: never block typing, just inform
+        const v = String(rel.tag_name).replace(/^v/, '');
+        setTimeout(() => toast(L('يتوفر تحديث v' + v + ' للتطبيق، حدّثه من شاشة الرسيفر', 'Update v' + v + ' is available, install it from the receiver screen')), 1500);
+        return;
+      }
       const show = () => {
         ui.updUrl = asset.browser_download_url; ui.forced = true;
         umodal(`<div class="onb"><img src="icon.png" alt=""><h2>🎉 ${L('تحديث جديد متوفر', 'New update available')}</h2>
@@ -1441,7 +1526,14 @@
         }
       }
     },
-    checkUpd: () => checkUpdate(true)
+    checkUpd: () => checkUpdate(true),
+    pvAct: a => window.onPreviewAction(a, PV.info),
+    pvStart: id => { const list = members(id); const start = Math.min(ui.page * PAGE, Math.max(0, list.length - 1)); previewStart(list, start, id); },
+    pvOne: i => {
+      const c = chAt(i);
+      if (ui.view === 'pack' && !ui.showRem) { const list = members(ui.pk); previewStart(list, list.indexOf(c), ui.pk); }
+      else previewStart([c], 0, null);
+    }
   };
 
   /* ---------------------------------------------------------------- init */

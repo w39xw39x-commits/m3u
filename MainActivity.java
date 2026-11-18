@@ -11,6 +11,16 @@ import android.text.InputType;
 import android.view.WindowManager;
 import android.webkit.JavascriptInterface;
 import android.widget.EditText;
+import android.widget.Button;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+import android.widget.VideoView;
+import android.widget.FrameLayout;
+import android.app.Dialog;
+import android.media.MediaPlayer;
+import android.os.SystemClock;
+import android.view.Gravity;
+import org.json.JSONObject;
 import java.io.FileInputStream;
 import android.content.ContentResolver;
 import android.content.ContentValues;
@@ -120,9 +130,149 @@ public class MainActivity extends Activity {
                 et.requestFocus();
             });
         }
+        /** Native channel preview with real resolution — works with .ts and .m3u8 on the receiver. */
+        @JavascriptInterface
+        public void preview(final String json) { runOnUiThread(() -> showPreview(json)); }
+
+        @JavascriptInterface
+        public void previewClose() { runOnUiThread(() -> { if (pv != null && pv.isShowing()) pv.dismiss(); }); }
+
         private void send(String id, String text) {
             if (web != null) web.evaluateJavascript("window.onNativeInput&&window.onNativeInput(" + WebServer.js(id) + "," + WebServer.js(text) + ")", null);
         }
+    }
+
+    // ---------------------------------------------------------------- preview dialog
+    private Dialog pv;
+    private VideoView pvVideo;
+    private TextView pvTitle, pvInfo;
+    private Button pvKeep, pvDel, pvPrev, pvClose;
+    private long pvStart, pvMs = -1;
+    private int pvW, pvH;
+    private String pvAlt, pvLang = "ar";
+    private boolean pvTriedAlt, pvFailed, pvSilentClose;
+
+    private int dp(int v) { return Math.round(v * getResources().getDisplayMetrics().density); }
+
+    private Button pvButton(String text, final String action, int color) {
+        Button b = new Button(this);
+        b.setText(text);
+        b.setAllCaps(false);
+        b.setTextSize(16);
+        b.setTextColor(Color.WHITE);
+        b.setBackgroundColor(color);
+        b.setFocusable(true);
+        b.setOnFocusChangeListener((v, f) -> { v.setScaleX(f ? 1.08f : 1f); v.setScaleY(f ? 1.08f : 1f); v.setAlpha(f ? 1f : 0.75f); });
+        b.setOnClickListener(v -> pvSend(action));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        lp.setMargins(dp(6), 0, dp(6), 0);
+        b.setLayoutParams(lp);
+        return b;
+    }
+
+    private void buildPreview() {
+        pv = new Dialog(this, android.R.style.Theme_Material_Dialog_NoActionBar);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(18), dp(16), dp(18), dp(16));
+        root.setBackgroundColor(Color.parseColor("#0f1730"));
+        pvTitle = new TextView(this);
+        pvTitle.setTextColor(Color.WHITE);
+        pvTitle.setTextSize(20);
+        pvTitle.setGravity(Gravity.CENTER);
+        root.addView(pvTitle);
+        int w = (int) (getResources().getDisplayMetrics().widthPixels * 0.58f);
+        FrameLayout box = new FrameLayout(this);
+        box.setBackgroundColor(Color.BLACK);
+        LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(w, w * 9 / 16);
+        blp.gravity = Gravity.CENTER_HORIZONTAL;
+        blp.setMargins(0, dp(10), 0, dp(10));
+        box.setLayoutParams(blp);
+        pvVideo = new VideoView(this);
+        FrameLayout.LayoutParams vlp = new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT);
+        vlp.gravity = Gravity.CENTER;
+        box.addView(pvVideo, vlp);
+        root.addView(box);
+        pvInfo = new TextView(this);
+        pvInfo.setTextColor(Color.parseColor("#9fe8ff"));
+        pvInfo.setTextSize(18);
+        pvInfo.setGravity(Gravity.CENTER);
+        pvInfo.setPadding(0, 0, 0, dp(12));
+        root.addView(pvInfo);
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        pvPrev = pvButton("‹", "prev", Color.parseColor("#2a3760"));
+        pvKeep = pvButton("✓", "keep", Color.parseColor("#0f8a5f"));
+        pvDel = pvButton("🗑", "delete", Color.parseColor("#c0304f"));
+        pvClose = pvButton("✕", "close", Color.parseColor("#2a3760"));
+        row.addView(pvPrev); row.addView(pvKeep); row.addView(pvDel); row.addView(pvClose);
+        root.addView(row);
+        pv.setContentView(root);
+        pvVideo.setOnPreparedListener(mp -> {
+            mp.setOnVideoSizeChangedListener((m, vw, vh) -> { pvW = vw; pvH = vh; pvUpdate(); });
+            pvW = mp.getVideoWidth(); pvH = mp.getVideoHeight(); pvUpdate();
+        });
+        pvVideo.setOnInfoListener((mp, what, extra) -> {
+            if (what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START && pvMs < 0) { pvMs = SystemClock.elapsedRealtime() - pvStart; pvUpdate(); pvSend("info"); }
+            return false;
+        });
+        pvVideo.setOnErrorListener((mp, what, extra) -> {
+            if (!pvTriedAlt && pvAlt != null && !pvAlt.isEmpty()) {
+                pvTriedAlt = true;
+                pvVideo.setVideoURI(Uri.parse(pvAlt));
+                pvVideo.start();
+            } else { pvFailed = true; pvUpdate(); pvSend("info"); }
+            return true;
+        });
+        pv.setOnDismissListener(d -> {
+            try { pvVideo.stopPlayback(); } catch (Exception ignored) { }
+            if (!pvSilentClose) pvSend("close");
+            pvSilentClose = false;
+        });
+    }
+
+    private void showPreview(String json) {
+        try {
+            JSONObject o = new JSONObject(json);
+            if (pv == null) buildPreview();
+            pvLang = o.optString("lang", "ar");
+            boolean en = "en".equals(pvLang);
+            pvKeep.setText(en ? "✓ Keep" : "✓ أبقِها");
+            pvDel.setText(en ? "🗑 Delete" : "🗑 احذفها");
+            pvPrev.setText(en ? "‹ Back" : "› السابقة");
+            pvClose.setText(en ? "✕ Close" : "✕ إغلاق");
+            pvTitle.setText(o.optString("name") + "    " + o.optString("pos"));
+            pvW = 0; pvH = 0; pvMs = -1; pvFailed = false; pvTriedAlt = false;
+            pvAlt = o.optString("alt", "");
+            pvStart = SystemClock.elapsedRealtime();
+            pvUpdate();
+            try { pvVideo.stopPlayback(); } catch (Exception ignored) { }
+            pvVideo.setVideoURI(Uri.parse(o.optString("url")));
+            pvVideo.start();
+            if (!pv.isShowing()) pv.show();
+            pvKeep.requestFocus();
+        } catch (Exception e) {
+            if (web != null) web.evaluateJavascript("window.onPreviewAction&&window.onPreviewAction('close',{})", null);
+        }
+    }
+
+    private void pvUpdate() {
+        boolean en = "en".equals(pvLang);
+        String t;
+        if (pvFailed) t = en ? "✕ Not playing — the channel may be down" : "✕ لا تعمل — القناة قد تكون متوقفة";
+        else if (pvH <= 0) t = en ? "⏳ Loading…" : "⏳ جاري التشغيل…";
+        else {
+            String q = pvH >= 2000 ? "4K UHD" : pvH >= 1000 ? "FHD 1080p" : pvH >= 700 ? "HD 720p" : "SD " + pvH + "p";
+            t = pvW + "×" + pvH + "  ·  " + q;
+            if (pvMs >= 0) t += "  ·  " + (en ? "started in " : "بدأت خلال ") + String.format(java.util.Locale.US, "%.1f", pvMs / 1000f) + (en ? "s" : " ث");
+        }
+        pvInfo.setText(t);
+    }
+
+    private void pvSend(String action) {
+        String info = "{\"w\":" + pvW + ",\"h\":" + pvH + ",\"ms\":" + pvMs + ",\"fail\":" + pvFailed + "}";
+        if ("close".equals(action) && pv != null && pv.isShowing()) { pvSilentClose = true; pv.dismiss(); }
+        if (web != null) web.evaluateJavascript("window.onPreviewAction&&window.onPreviewAction('" + action + "'," + info + ")", null);
     }
 
     /** Result of the in-app updater (PackageInstaller). */
