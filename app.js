@@ -6,7 +6,13 @@
   const $ = (s, r) => (r || document).querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const enc = encodeURIComponent;
-  const IS_TV = /[?&]tv=1/.test(location.search);
+  /* IN_APP: running inside the installed app. Inside the app the user picks TV (remote) or MOBILE (touch) once. */
+  const IN_APP = /[?&]tv=1/.test(location.search);
+  const BR = window.AndroidBridge || null;
+  let APP_MODE = '';
+  try { APP_MODE = IN_APP && BR && BR.getMode ? BR.getMode() : ''; } catch (e) { }
+  const IS_TV = IN_APP && APP_MODE !== 'mobile';
+  document.documentElement.classList.add(IS_TV ? 'tvm' : 'touch');
   const PAGE = 60;
   const AR_RE = /[؀-ۿ]/;
   const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -127,6 +133,11 @@
     }, 600);
   }
   function changed() { MEMO = null; save(); }
+  function snap(pk, label) { ui.undo = { id: pk.id, t: Date.now(), label, data: JSON.stringify({ rem: pk.rem || [], add: pk.add || [], ord: pk.ord || [] }) }; }
+  function undoBar() {
+    const u = ui.undo; if (!u || Date.now() - u.t > 120000) return '';
+    return `<div class="undobar"><span>🗑 ${esc(u.label)}</span><button class="btn sm f" data-act="undo" data-fid="undo">↩ ${L('تراجع', 'Undo')}</button></div>`;
+  }
 
   /* ---------------------------------------------------------------- parsing */
   function parseInf(l) {
@@ -529,7 +540,13 @@
   }
   function nav(dir) {
     const cur = document.activeElement, list = focusables();
-    if (!list.length) return;
+    if (!list.length) {
+      if (dir === 'up' || dir === 'down') {
+        const x = [...document.querySelectorAll(ui.modal ? '#modal .notes, #modal .list, #modal .box' : '#main')].find(x => x.scrollHeight > x.clientHeight + 4);
+        if (x) x.scrollTop += (dir === 'down' ? 1 : -1) * Math.max(60, x.clientHeight * 0.7);
+      }
+      return;
+    }
     if (!cur || cur === document.body || !list.includes(cur)) { (list.find(e => e.classList.contains('auto')) || list[0]).focus(); return; }
     const zone = e => e.closest('#modal') ? 'm' : e.closest('#side') ? 's' : 'c';
     const z0 = zone(cur), vert = dir === 'up' || dir === 'down';
@@ -554,14 +571,39 @@
       let sc = main + gap * 2 + (gap > 0 ? 4000 : 0) + (z !== z0 ? 3000 : 0);
       if (sc < bs) { bs = sc; best = e; }
     }
+    if (vert) {
+      // text that cannot take focus (lists, notes, long pages) still scrolls with the arrows
+      const sc = scrollerOf(cur) || (ui.modal ? $('#modal .box') : $('#main'));
+      if (sc) {
+        const can = dir === 'down' ? sc.scrollTop + sc.clientHeight < sc.scrollHeight - 2 : sc.scrollTop > 0;
+        if (can) {
+          const b = sc.getBoundingClientRect(), lim = sc.clientHeight * 0.6;
+          const far = !best || (dir === 'down' ? best.getBoundingClientRect().top - b.bottom > lim : b.top - best.getBoundingClientRect().bottom > lim);
+          if (far) { sc.scrollTop += (dir === 'down' ? 1 : -1) * Math.max(80, sc.clientHeight * 0.7); return; }
+        }
+      }
+      // inside a window: notes / lists that hold no buttons scroll with up/down when nothing else is that way
+      if (z0 === 'm' && !best) {
+        const regs = [...document.querySelectorAll('#modal .notes, #modal .list')].filter(x => x.scrollHeight > x.clientHeight + 4 &&
+          (dir === 'down' ? x.scrollTop + x.clientHeight < x.scrollHeight - 2 : x.scrollTop > 0));
+        if (regs.length) { const x = regs[0]; x.scrollTop += (dir === 'down' ? 1 : -1) * Math.max(60, x.clientHeight * 0.7); return; }
+      }
+    }
     if (best) { best.focus({ preventScroll: true }); keepVisible(best); }
     else if (vert && !ui.modal) {
       const pg = $('[data-act="page"][data-arg="' + (ui.page + (dir === 'down' ? 1 : -1)) + '"]');
       if (pg && !pg.disabled) pg.click();
     }
   }
+  function scrollerOf(el) {
+    for (let p = el && el.parentElement; p && p !== document.body; p = p.parentElement) {
+      const oy = getComputedStyle(p).overflowY;
+      if ((oy === 'auto' || oy === 'scroll') && p.scrollHeight > p.clientHeight + 4) return p;
+    }
+    return null;
+  }
   function keepVisible(el) {
-    const sc = el.closest('#main, #modal .box') || $('#main');
+    const sc = scrollerOf(el) || el.closest('#main, #modal .box') || $('#main');
     if (!sc) return;
     const r = el.getBoundingClientRect(), b = sc.getBoundingClientRect(), pad = 70;
     if (r.top < b.top + pad) sc.scrollTop -= (b.top + pad - r.top);
@@ -686,7 +728,7 @@
   }
   function topHtml() {
     const s = src();
-    const titles = { subs: 'الاشتراكات', packs: 'الباقات', pack: '', browse: 'تصفح قنوات المزود', group: '', export: 'إرسال إلى الرسيفر', settings: 'الإعدادات', favs: 'المفضلة' };
+    const titles = { subs: 'الاشتراكات', packs: 'الباقات', pack: '', browse: 'تصفح قنوات المزود', group: '', export: 'إرسال إلى الرسيفر', settings: 'الإعدادات', favs: 'المفضلة', probe: 'نتيجة الفحص' };
     let t = titles[ui.view];
     if (ui.view === 'pack') { const pk = pkById(ui.pk); t = pk ? `<span class="pkdot" style="${cv(pk.col)}">${pk.ic}</span> <span class="nt">${esc(pkName(pk))}</span>` : ''; }
     if (ui.view === 'group') t = '<span class="nt">🗂️ ' + esc(ui.grp) + '</span>';
@@ -750,21 +792,23 @@
     const tabs = [['link', '🔗 رابط اشتراك'], ['xtream', '🔑 Xtream'], ['file', '📁 ملف M3U']]
       .map(([k, l]) => `<button class="tab f ${t === k ? 'on auto' : ''}" data-act="srcTab" data-arg="${k}" data-fid="tab-${k}">${l}</button>`).join('');
     let form = '';
+    const pb = id => IS_TV ? '' : `<button class="ib paste f" data-act="pasteTo" data-arg="${id}" data-fid="pb-${id}" title="Paste">📋</button>`;
+    const row = (id, inner) => IS_TV ? inner : `<div class="inrow">${inner}${pb(id)}</div>`;
     if (t === 'link') form = `
       <label class="fl">رابط الاشتراك (M3U أو رابط get.php)</label>
-      <input class="in f" id="f-url" data-fid="f-url" placeholder="http://server:port/get.php?username=…&password=…" value="${esc(e.url || '')}">
+      ${row('f-url', `<input class="in f" id="f-url" data-fid="f-url" type="url" inputmode="url" placeholder="http://server:port/get.php?username=…&password=…" value="${esc(e.url || '')}">`)}
       <div class="hint">يتعرّف التطبيق تلقائياً على نوع الرابط ويفحص حالة الاشتراك.</div>`;
     else if (t === 'xtream') form = `
-      <label class="fl">عنوان السيرفر</label><input class="in f" id="f-server" data-fid="f-server" placeholder="http://server.com:8080" value="${esc(e.server || '')}">
-      <div class="grid2"><div><label class="fl">اسم المستخدم</label><input class="in f" id="f-user" data-fid="f-user" value="${esc(e.user || '')}"></div>
-      <div><label class="fl">كلمة المرور</label><input class="in f" id="f-pass" data-fid="f-pass" value="${esc(e.pass || '')}"></div></div>
+      <label class="fl">عنوان السيرفر</label>${row('f-server', `<input class="in f" id="f-server" data-fid="f-server" inputmode="url" placeholder="http://server.com:8080" value="${esc(e.server || '')}">`)}
+      <div class="grid2"><div><label class="fl">اسم المستخدم</label>${row('f-user', `<input class="in f" id="f-user" data-fid="f-user" value="${esc(e.user || '')}">`)}</div>
+      <div><label class="fl">كلمة المرور</label>${row('f-pass', `<input class="in f" id="f-pass" data-fid="f-pass" value="${esc(e.pass || '')}">`)}</div></div>
       <label class="fl">نوع البث</label><div class="seg">${['ts', 'm3u8'].map(o => `<button class="btn sm f ${(e.output || 'ts') === o ? 'on' : ''}" data-act="xtOut" data-arg="${o}" data-fid="xo-${o}">${o.toUpperCase()}</button>`).join('')}</div>`;
     else form = `
       <div class="filebox">
         <button class="btn pri f" data-act="browse" data-arg="" data-fid="pick-browse">📂 تصفح ملفات الرسيفر و USB</button>
         <button class="btn f" data-act="sysPick" data-fid="pick-sys">🗂 فتح مدير الملفات</button>
         <button class="btn f" data-act="pickDevice" data-fid="pick-dev">🔍 بحث تلقائي عن ملفات M3U</button>
-        ${IS_TV ? '' : `<label class="btn f" tabindex="0" data-fid="pick-pc">💻 رفع من الكمبيوتر<input type="file" id="f-file" accept=".m3u,.m3u8,.txt" hidden></label>`}
+        ${IN_APP ? '' : `<label class="btn f" tabindex="0" data-fid="pick-pc">💻 رفع من الكمبيوتر<input type="file" id="f-file" accept=".m3u,.m3u8,.txt" hidden></label>`}
       </div><div class="hint">يبحث التطبيق عن ملفات .m3u في الذاكرة الداخلية وفلاش USB.</div>`;
     const list = S.sources.map((s, i) => {
       const cur = s.id === S.active;
@@ -876,8 +920,43 @@
         <input class="in rtl search f auto" data-inp="q" data-fid="q" placeholder="🔍 بحث داخل الباقة…" value="${esc(ui.q)}">
         ${remN ? `<button class="btn sm f ${ui.showRem ? 'on' : ''}" data-act="showRem" data-fid="ph-rem">🗑 المحذوفة (${remN})</button>` : ''}
       </div>
-      ${ui.move ? '<div class="movebar">⇅ وضع الترتيب: ⬆⬇ لتحريك القناة · CH± لتحريك 10 · OK للتثبيت</div>' : `<div class="hint top">اضغط <b>OK</b> على أي قناة لتحريكها بالأسهم${IS_TV ? '' : '، أو اسحبها بالماوس'}</div>`}
-      <div class="list">${rows || `<div class="empty"><div class="big">${pk.ic}</div><p>لا توجد قنوات في هذه الباقة</p><button class="btn pri f" data-act="pkAddCh" data-arg="${pk.id}">＋ إضافة قنوات</button></div>`}</div>
+      ${ui.move ? '<div class="movebar">⇅ وضع الترتيب: ⬆⬇ لتحريك القناة · CH± لتحريك 10 · OK للتثبيت</div>' : `<div class="hint top">اضغط <b>OK</b> على أي قناة لتحريكها بالأسهم${IN_APP ? '' : '، أو اسحبها بالماوس'}</div>`}
+      ${undoBar()}<div class="list">${rows || `<div class="empty"><div class="big">${pk.ic}</div><p>لا توجد قنوات في هذه الباقة</p><button class="btn pri f" data-act="pkAddCh" data-arg="${pk.id}">＋ إضافة قنوات</button></div>`}</div>
+      ${pager(list.length)}`;
+  };
+
+  VIEWS.probe = function () {
+    const p = ui.probe; if (!p) return needSource();
+    const pk = pkById(p.pk); if (!pk) return '';
+    const mem = members(pk.id);
+    const st = c => p.res[c.k] || '';
+    const nBad = mem.filter(c => st(c) === 'bad').length, nOk = mem.filter(c => st(c) === 'ok').length;
+    let list = mem.filter(c => st(c));
+    list.sort((a, b) => (st(a) === 'bad' ? 0 : 1) - (st(b) === 'bad' ? 0 : 1));
+    if (p.filter === 'bad') list = list.filter(c => st(c) === 'bad'); else if (p.filter === 'ok') list = list.filter(c => st(c) === 'ok');
+    if (ui.q) { const q = ui.q.toLowerCase(); list = list.filter(c => dispName(c).toLowerCase().includes(q)); }
+    const nSel = Object.keys(p.sel).length;
+    const start = ui.page * PAGE, page = list.slice(start, start + PAGE);
+    const seg = (k, l) => `<button class="btn sm f ${p.filter === k ? 'on' : ''}" data-act="prFilter" data-arg="${k}" data-fid="prf-${k}">${l}</button>`;
+    const rows = page.map((c, i) => {
+      const bad = st(c) === 'bad', on = !!p.sel[c.k], fid = 'pr-' + c.i;
+      return `<div class="row prow ${bad ? 'dead' : ''} ${on ? 'sel' : ''}"><button class="ib chk f ${on ? 'on' : ''}" data-act="prSel" data-arg="${c.i}" data-fid="${fid}-s">${on ? '✓' : ''}</button>
+        <button class="rowmain f" data-act="prSel" data-arg="${c.i}" data-fid="${fid}"><span class="dot ${bad ? 'b' : 'g'}"></span>${logo(c)}<span class="nm nt"><b>${esc(dispName(c))}</b><small>${bad ? L('متوقفة', 'Stopped') : L('تعمل', 'Working')} · ${esc(c.g)}</small></span></button>
+        <button class="ib play f" data-act="pvPlay" data-arg="${c.i}" data-fid="${fid}-p">▶</button>
+        <button class="ib del f" data-act="chRemove" data-arg="${c.i}" data-fid="${fid}-x">✕</button></div>`;
+    }).join('');
+    return `<div class="pkhead" style="${cv(pk.col)}">
+        <div class="pkinfo"><span class="big-ic">🩺</span><div><b class="nt">${esc(pkName(pk))}</b><div class="mut small"><span class="bad">● ${fmtN(nBad)} ${L('متوقفة', 'stopped')}</span> · <span class="ok">● ${fmtN(nOk)} ${L('تعمل', 'working')}</span></div></div></div>
+        <div class="bar">
+          <button class="btn f ${nSel ? '' : 'auto'}" data-act="prSelDead" data-fid="pr-seld">${nSel ? '☐ ' + L('إلغاء التحديد', 'Clear selection') : '☑ ' + L('تحديد كل المتوقفة', 'Select all stopped')}</button>
+          <button class="btn danger f ${nSel ? 'auto' : ''}" data-act="prDelSel" data-fid="pr-del" ${nSel ? '' : 'disabled'}>✕ ${L('حذف المحدد', 'Delete selected')} (${fmtN(nSel)})</button>
+          <button class="btn f" data-act="prRecheck" data-fid="pr-re" ${nBad ? '' : 'disabled'}>🔄 ${L('إعادة فحص المتوقفة', 'Re-check stopped')}</button>
+          <button class="btn f" data-act="prBack" data-fid="pr-back">↩ ${L('رجوع للباقة', 'Back to package')}</button>
+        </div></div>
+      <div class="bar"><div class="seg">${seg('bad', '🔴 ' + L('المتوقفة', 'Stopped') + ' ' + fmtN(nBad))}${seg('ok', '🟢 ' + L('تعمل', 'Working') + ' ' + fmtN(nOk))}${seg('all', L('الكل', 'All'))}</div>
+        <input class="in rtl search f" data-inp="q" data-fid="q" placeholder="🔍 ${L('بحث…', 'Search…')}" value="${esc(ui.q)}"></div>
+      ${undoBar()}
+      <div class="list">${rows || `<div class="empty"><div class="big">✅</div><p>${L('لا توجد قنوات هنا', 'Nothing here')}</p></div>`}</div>
       ${pager(list.length)}`;
   };
 
@@ -938,7 +1017,7 @@
     return `${permBox}<div class="card send">
         <div class="sendrow"><div class="sendinfo"><b class="ltr">${fmtN(b.count)}</b> <span>${L('قناة في ' + fmtN(b.per.length) + ' باقة', 'channels in ' + fmtN(b.per.length) + ' packages')} · <span class="ltr">${fmtMB(sz)}</span></span></div>
         <button class="btn pri huge f auto" data-act="doExport" data-fid="ex-go">🚀 حفظ القائمة وإرسالها إلى الرسيفر</button></div>
-        ${IS_TV ? '' : `<p class="mut small" style="margin-top:10px">${L('الزر الكبير يحفظ القائمة مباشرة في الرسيفر.', 'The big button saves the list straight to the receiver.')} <button class="btn sm f" data-act="download" data-fid="ex-dl">⬇ ${L('نسخة احتياطية على هذا الجهاز', 'Backup copy on this device')}</button></p>`}
+        ${IN_APP ? '' : `<p class="mut small" style="margin-top:10px">${L('الزر الكبير يحفظ القائمة مباشرة في الرسيفر.', 'The big button saves the list straight to the receiver.')} <button class="btn sm f" data-act="download" data-fid="ex-dl">⬇ ${L('نسخة احتياطية على هذا الجهاز', 'Backup copy on this device')}</button></p>`}
         ${b.count > 5000 ? '<p class="warnbox">⚠ عدد كبير من القنوات؛ إذا رفض الرسيفر الاستيراد قلّل الباقات المفعّلة.</p>' : ''}
         ${result}</div>
       <div class="grid-ex">
@@ -962,6 +1041,9 @@
         <div class="opt"><span>أسماء الباقات في الملف المرسل للرسيفر</span><div class="seg">${seg('setName', o.nameLang, [['ar', 'عربي'], ['en', '<span class="nt">English</span>'], ['both', 'عربي + English']])}</div></div></div>
       <div class="card"><h2>المظهر</h2>
         <div class="opt"><span>الوضع النهاري والليلي</span><div class="seg">${seg('setTheme', st.theme || 'dark', [['dark', '🌙 ليلي'], ['light', '☀️ نهاري'], ['auto', '🌗 تلقائي حسب الوقت']])}</div></div></div>
+      ${IN_APP ? `<div class="card"><h2>${L('طريقة العرض', 'Display')}</h2><div class="modes sm">
+        <button class="modecard f ${IS_TV ? 'on' : ''}" data-act="setDisp" data-arg="tv" data-fid="st-m-tv"><span class="mi">${ICON_TV}</span><b class="nt">TV</b></button>
+        <button class="modecard f ${!IS_TV ? 'on' : ''}" data-act="setDisp" data-arg="mobile" data-fid="st-m-mob"><span class="mi">${ICON_MOB}</span><b class="nt">MOBILE</b></button></div></div>` : ''}
       <div class="card"><h2>التخزين</h2>
         <p>${INFO.storage ? '<span class="ok">✓ صلاحية التخزين ممنوحة</span>' : '<span class="bad">✕ صلاحية التخزين غير ممنوحة؛ يلزم منحها لحفظ الملف</span>'}</p>
         <button class="btn f auto" data-act="perm" data-fid="st-perm">منح صلاحية التخزين</button>
@@ -973,7 +1055,7 @@
         <p>افتح هذا الرابط من أي جهاز على نفس شبكة الواي فاي لترتيب القنوات بالماوس:</p>
         ${(INFO.ips || []).map(ip => `<span class="code big">http://${esc(ip)}:${INFO.port}</span>`).join(' ') || '<span class="mut">غير متصل بالشبكة</span>'}</div>
       <div class="card"><h2>النسخ الاحتياطي</h2><div class="bar">
-        ${IS_TV ? '' : '<button class="btn f" data-act="backup" data-fid="st-bk">⬇ حفظ نسخة من الإعدادات</button><label class="btn f" tabindex="0">⬆ استعادة<input type="file" id="f-restore" accept=".json" hidden></label>'}
+        ${IN_APP ? '' : '<button class="btn f" data-act="backup" data-fid="st-bk">⬇ حفظ نسخة من الإعدادات</button><label class="btn f" tabindex="0">⬆ استعادة<input type="file" id="f-restore" accept=".json" hidden></label>'}
         <button class="btn danger f" data-act="resetCfg" data-fid="st-reset">إعادة ضبط باقات الاشتراك الحالي</button></div></div>
       <div class="card"><h2>التحديثات</h2><div class="opt"><span>${L('النسخة الحالية', 'Current version')} <b class="ltr">v${esc((INFO.app || {}).name || INFO.version || '')}</b></span>
         <button class="btn f" data-act="checkUpd" data-fid="st-upd">🔄 ${L('التحقق من التحديثات', 'Check for updates')}</button></div>
@@ -1056,6 +1138,13 @@
         <button class="pkpick f ${o.nameLang === 'both' ? 'on' : ''}" data-act="onbName" data-arg="both">عربي + English<small class="nt">رياضة | Sports</small></button></div>
       <div class="bar end"><button class="btn pri f" data-act="onbDone">متابعة ‹</button></div>`);
   }
+  const ICON_TV = '<svg viewBox="0 0 64 64" width="64" height="64" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="10" width="52" height="34" rx="5"/><path d="M24 54h16M32 44v10"/></svg>';
+  const ICON_MOB = '<svg viewBox="0 0 64 64" width="64" height="64" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><rect x="19" y="5" width="26" height="54" rx="5"/><path d="M29 51h6"/></svg>';
+  function modePicker() {
+    let sug = 'tv'; try { sug = BR && BR.deviceKind ? BR.deviceKind() : 'tv'; } catch (e) { }
+    const card = (m, ic, t) => `<button class="modecard f ${m === (APP_MODE || sug) ? 'auto on' : ''}" data-act="setDisp" data-arg="${m}"><span class="mi">${ic}</span><b class="nt">${t}</b></button>`;
+    modal(`<div class="onb"><img src="icon.png" alt=""></div><div class="modes">${card('tv', ICON_TV, 'TV')}${card('mobile', ICON_MOB, 'MOBILE')}</div>`);
+  }
   function welcome() {
     const st = S.settings;
     const b = (act, cur, k, l) => `<button class="pkpick f ${cur === k ? 'on auto' : ''}" data-act="${act}" data-arg="${k}">${l}</button>`;
@@ -1076,6 +1165,16 @@
     go: v => go(v),
     page: p => { ui.page = Math.max(0, +p); ui.move = null; render(true); },
     closeModal: () => closeModal(),
+    setDisp: m => { try { BR && BR.setMode && BR.setMode(m); } catch (e) { } location.reload(); },
+    modePick: () => modePicker(),
+    pasteTo: id => {
+      const el = document.getElementById(id); if (!el) return;
+      let t = ''; try { t = BR && BR.clipboard ? BR.clipboard() : ''; } catch (e) { }
+      const put = v => { v = String(v || '').trim(); if (!v) return toast(L('الحافظة فاضية', 'Clipboard is empty'), 'bad'); el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); readForm(); toast(L('تم اللصق ✓', 'Pasted ✓'), 'ok'); };
+      if (t) return put(t);
+      if (navigator.clipboard && navigator.clipboard.readText) navigator.clipboard.readText().then(put, () => { el.focus(); toast(L('اضغط مطولاً على الخانة واختر «لصق»', 'Long-press the field and choose Paste')); });
+      else { el.focus(); toast(L('اضغط مطولاً على الخانة واختر «لصق»', 'Long-press the field and choose Paste')); }
+    },
     srcTab: t => { readForm(); ui.srcTab = t; S.settings.srcTab = t; save(); render(); },
     xtOut: o => { readForm(); ui.editSrc.output = o; render(); },
     srcAdd: () => {
@@ -1086,6 +1185,7 @@
         s = detectLink(f.url);
         if (!s) return toast('الرابط غير صحيح، تأكد أنه يبدأ بـ http', 'bad');
       } else {
+        if (f.server && (!f.user || !f.pass)) { const d = detectLink(/^https?:/i.test(f.server.trim()) ? f.server.trim() : 'http://' + f.server.trim()); if (d && d.type === 'xtream') { f.user = d.user; f.pass = d.pass; f.server = d.server; } }
         if (!f.server || !f.user || !f.pass) return toast('أكمل بيانات Xtream', 'bad');
         let sv = f.server.trim(); if (!/^https?:\/\//i.test(sv)) sv = 'http://' + sv;
         s = { type: 'xtream', server: sv, user: f.user.trim(), pass: f.pass.trim(), output: f.output || 'ts' };
@@ -1216,26 +1316,47 @@
       }
       changed(); closeModal(); toast('تم الترتيب ✓', 'ok');
     },
-    pkProbe: async id => {
-      const list = members(id).slice(0, 500);
-      let ok = 0, bad = [], stop = false;
+    pkProbe: async (id, _el, _ev, onlyDead) => {
+      const pk = pkById(id);
+      const prev = ui.probe && ui.probe.pk === id ? ui.probe.res : {};
+      let list = members(id);
+      if (onlyDead) list = list.filter(c => prev[c.k] === 'bad');
+      if (!list.length) return toast(L('لا توجد قنوات للفحص', 'Nothing to check'), 'bad');
+      const res = Object.assign({}, onlyDead ? prev : {});
+      let ok = 0, bad = 0, stop = false;
       ui.probeStop = () => { stop = true; };
-      modal(`<h2>فحص القنوات</h2><p id="pr-t" class="mut">0 / ${list.length}</p><div class="prog"><i id="pr-b"></i></div>
-        <p class="hint">الفحص يتم قناة بقناة حتى لا يتجاوز عدد الاتصالات المسموحة في اشتراكك.</p>
-        <div class="bar end"><button class="btn f auto" data-act="probeStop">إيقاف</button></div>`);
+      modal(`<h2>🩺 ${L('فحص القنوات', 'Checking channels')}</h2><p id="pr-t" class="mut">0 / ${fmtN(list.length)}</p><div class="prog"><i id="pr-b"></i></div>
+        <p class="hint">${L('الفحص يتم قناة بقناة حتى لا يتجاوز عدد الاتصالات المسموحة في اشتراكك.', 'Channels are checked one by one to respect your connection limit.')}</p>
+        <div class="bar end"><button class="btn f auto" data-act="probeStop">${L('إيقاف وعرض النتيجة', 'Stop & show results')}</button></div>`);
+      const qi = cfg().qi || (cfg().qi = {});
       for (let i = 0; i < list.length && !stop; i++) {
-        try { const r = await (await fetch('/api/probe?url=' + enc(list[i].u))).json(); if (r.ok) ok++; else bad.push(list[i]); } catch (e) { bad.push(list[i]); }
+        const c = list[i]; let good = false;
+        try { const r = await (await fetch('/api/probe?url=' + enc(c.u))).json(); good = !!r.ok; } catch (e) { }
+        res[c.k] = good ? 'ok' : 'bad';
+        if (good) { ok++; if (qi[c.k] && qi[c.k].fail) delete qi[c.k]; } else { bad++; qi[c.k] = Object.assign({}, qi[c.k], { fail: true }); }
         const t = $('#pr-t'), b = $('#pr-b');
-        if (!t) break;
-        t.textContent = `${i + 1} / ${list.length} · تعمل: ${ok} · متوقفة: ${bad.length}`; b.style.width = ((i + 1) / list.length * 100) + '%';
+        if (!t) { stop = true; break; }
+        t.textContent = `${fmtN(i + 1)} / ${fmtN(list.length)} · ${L('تعمل', 'working')}: ${fmtN(ok)} · ${L('متوقفة', 'stopped')}: ${fmtN(bad)}`;
+        b.style.width = ((i + 1) / list.length * 100) + '%';
       }
-      ui.deadList = bad;
-      if ($('#pr-t')) modal(`<h2>نتيجة الفحص</h2><p><span class="ok">✓ ${ok} تعمل</span> · <span class="bad">✕ ${bad.length} متوقفة</span></p>
-        <div class="list small">${bad.slice(0, 30).map(c => `<div class="path">✕ ${esc(dispName(c))}</div>`).join('')}</div>
-        <div class="bar end"><button class="btn f auto" data-act="closeModal">إغلاق</button>${bad.length ? `<button class="btn danger f" data-act="removeDead" data-arg="${id}">حذف المتوقفة من الباقة</button>` : ''}</div>`);
+      save();
+      ui.probe = { pk: id, res, sel: {}, filter: Object.values(res).includes('bad') ? 'bad' : 'all' };
+      closeModal();
+      go('probe');
     },
-    probeStop: () => { ui.probeStop && ui.probeStop(); closeModal(); },
-    removeDead: id => { const pk = pkById(id); ui.deadList.forEach(c => removeFrom(pk, c)); closeModal(); toast('تم حذف ' + ui.deadList.length + ' قناة'); },
+    probeStop: () => { ui.probeStop && ui.probeStop(); },
+    prFilter: f => { ui.probe.filter = f; ui.page = 0; render(true); },
+    prSel: i => { const k = chAt(i).k, s = ui.probe.sel; if (s[k]) delete s[k]; else s[k] = 1; render(); },
+    prSelDead: () => { const p = ui.probe, all = Object.keys(p.sel).length; p.sel = {}; if (!all) for (const k in p.res) if (p.res[k] === 'bad') p.sel[k] = 1; render(); },
+    prDelSel: () => {
+      const p = ui.probe, pk = pkById(p.pk), keys = Object.keys(p.sel); if (!keys.length) return toast(L('حدد قنوات أولاً', 'Select channels first'), 'bad');
+      snap(pk, L('حُذفت ', 'Removed ') + fmtN(keys.length) + L(' قناة', ' channels'));
+      keys.forEach(k => { const c = BYK.get(k); if (c) removeFrom(pk, c); });
+      p.sel = {}; render(); toast(L('تم حذف ', 'Removed ') + fmtN(keys.length), 'ok');
+    },
+    prRecheck: () => ACT.pkProbe(ui.probe.pk, null, null, true),
+    prBack: () => { go('pack', { pk: ui.probe.pk }); },
+    removeDead: id => { const pk = pkById(id), dead = members(id).filter(c => ui.probe && ui.probe.res[c.k] === 'bad'); snap(pk, L('حُذفت ', 'Removed ') + fmtN(dead.length)); dead.forEach(c => removeFrom(pk, c)); render(); },
     showRem: () => { ui.showRem = !ui.showRem; ui.page = 0; render(true); },
     chMove: i => {
       const c = chAt(i);
@@ -1244,7 +1365,11 @@
       ui.move = { kind: 'ch', pk: ui.pk, key: c.k }; render();
     },
     chFav: i => { const c = chAt(i); toggleFav(c); render(); toast(inPk(pkById('fav'), c) ? '⭐ أضيفت للمفضلة' : 'أزيلت من المفضلة'); },
-    chRemove: i => { const c = chAt(i); removeFrom(pkById(ui.pk), c); render(); toast('حُذفت ' + dispName(c)); },
+    chRemove: i => { const c = chAt(i), pk = pkById(ui.view === 'probe' ? ui.probe.pk : ui.pk); snap(pk, L('حُذفت ', 'Removed ') + dispName(c)); removeFrom(pk, c); render(); },
+    undo: () => {
+      const u = ui.undo, pk = u && pkById(u.id); if (!pk) return;
+      const d = JSON.parse(u.data); pk.rem = d.rem; pk.add = d.add; pk.ord = d.ord; ui.undo = null; changed(); render(); toast(L('تم التراجع ✓', 'Undone ✓'), 'ok');
+    },
     chRestore: i => { const c = chAt(i), pk = pkById(ui.pk); pk.rem = pk.rem.filter(k => k !== c.k); changed(); render(); },
     chTarget: i => { const c = chAt(i), tp = pkById(ui.target) || pkById('fav'); if (inPk(tp, c)) removeFrom(tp, c); else addTo(tp, c); render(); },
     chMenu: i => chMenu(chAt(i)),
@@ -1306,7 +1431,7 @@
       if (!b.count) return toast('لا توجد قنوات؛ فعّل باقة واحدة على الأقل', 'bad');
       if (ui.exporting) return;
       ui.exporting = true;
-      toast(IS_TV ? 'جاري الحفظ…' : L('جاري الإرسال للرسيفر…', 'Sending to the receiver…'));
+      toast(IN_APP ? 'جاري الحفظ…' : L('جاري الإرسال للرسيفر…', 'Sending to the receiver…'));
       let r = null;
       for (let k = 0; k < 3 && !r; k++) {
         try {
@@ -1316,7 +1441,7 @@
       }
       ui.exporting = false;
       if (!r) {
-        if (!IS_TV) return modal(`<h2>⚠ ${L('ما وصلت القائمة للرسيفر', 'The list did not reach the receiver')}</h2>
+        if (!IN_APP) return modal(`<h2>⚠ ${L('ما وصلت القائمة للرسيفر', 'The list did not reach the receiver')}</h2>
           <p class="mut">${L('تأكد إن تطبيق M3U مفتوح في الرسيفر وإن الجوال على نفس شبكة الواي فاي، ثم حاول مرة ثانية.', 'Make sure M3U is open on the receiver and the phone is on the same Wi-Fi, then try again.')}</p>
           <div class="bar end"><button class="btn f" data-act="closeModal">${L('إغلاق', 'Close')}</button><button class="btn pri f auto" data-act="doExportRetry">🔄 ${L('إعادة الإرسال', 'Send again')}</button></div>`);
         return toast('خطأ في الحفظ', 'bad');
@@ -1325,7 +1450,7 @@
       const ok = (r.saved || []).length > 0;
       render();
       if (!ok && !INFO.storage) ACT.perm();
-      if (!IS_TV) {
+      if (!IN_APP) {
         const fn = esc(cfg().opt.fname || 'M3U_TV') + '.m3u';
         modal(ok ? `<div class="onb"><h2>✅ ${L('وصلت القائمة للرسيفر', 'The list is on the receiver')}</h2>
             <p class="mut">${fmtN(b.count)} ${L('قناة · محفوظة في الرسيفر باسم', 'channels · saved on the receiver as')} <b class="ltr nt">${fn}</b></p></div>
@@ -1525,7 +1650,7 @@
     const asset = (rel.assets || []).find(a => /\.apk$/i.test(a.name));
     if (code > cur && asset) {
       const notes = await getNotes();
-      if (!IS_TV) {   // phone / PC browser: never block typing, just inform
+      if (!IN_APP) {   // phone / PC browser: never block typing, just inform
         const v = String(rel.tag_name).replace(/^v/, '');
         setTimeout(() => toast(L('يتوفر تحديث v' + v + ' للتطبيق، حدّثه من شاشة الرسيفر', 'Update v' + v + ' is available, install it from the receiver screen')), 1500);
         return;
@@ -1570,7 +1695,7 @@
     };
     show();
   }
-  function ovNeed() { if (!IS_TV || S.settings.ovSkip) return false; try { return !!(window.AndroidBridge && AndroidBridge.overlayState && AndroidBridge.overlayState() === 'need'); } catch (e) { return false; } }
+  function ovNeed() { if (!IN_APP || S.settings.ovSkip) return false; try { return !!(window.AndroidBridge && AndroidBridge.overlayState && AndroidBridge.overlayState() === 'need'); } catch (e) { return false; } }
   ACT_EXTRA = {
     doUpdate: async () => {
       if (!ui.updUrl || ui.updBusy) return;
@@ -1617,7 +1742,7 @@
       let j = { ok: false };
       try { j = await (await fetch('/api/play?url=' + enc(c.u))).json(); } catch (e) { }
       if (!j.ok) toast(L('لا يوجد مشغّل فيديو في الرسيفر', 'No video player on the receiver'), 'bad');
-      else if (!IS_TV) toast(L('▶ تعمل الآن على شاشة الرسيفر', '▶ Now playing on the receiver screen'), 'ok');
+      else if (!IN_APP) toast(L('▶ تعمل الآن على شاشة الرسيفر', '▶ Now playing on the receiver screen'), 'ok');
     },
     pvAct: a => window.onPreviewAction(a, PV.info),
     pvStart: id => { const list = members(id); const start = Math.min(ui.page * PAGE, Math.max(0, list.length - 1)); previewStart(list, start, id); },
@@ -1633,6 +1758,7 @@
     try { INFO = await (await fetch('/api/info')).json(); renderSide(); } catch (e) { }
   }
   async function init() {
+    if (IN_APP && BR && BR.setMode && !APP_MODE) { modePicker(); return; }
     await refreshInfo();
     try { const st = await (await fetch('/api/state')).json(); if (st && st.sources) S = Object.assign(S, st); } catch (e) { }
     S.settings = S.settings || {};
@@ -1652,15 +1778,15 @@
     try { j = await (await fetch('/api/info?t=' + Date.now(), { cache: 'no-store' })).json(); } catch (e) { }
     if (!j) {
       liveFails++;
-      if (!IS_TV && liveFails === 2) toast(L('⚠ انقطع الاتصال بالرسيفر — تأكد إن تطبيق M3U مفتوح فيه', '⚠ Lost the receiver — make sure M3U is open on it'), 'bad');
+      if (!IN_APP && liveFails === 2) toast(L('⚠ انقطع الاتصال بالرسيفر — تأكد إن تطبيق M3U مفتوح فيه', '⚠ Lost the receiver — make sure M3U is open on it'), 'bad');
       return;
     }
     const was = liveFails; liveFails = 0;
     const oldCode = (INFO.app || {}).code, newCode = (j.app || {}).code;
-    if (!IS_TV && oldCode && newCode && oldCode !== newCode && !document.querySelector('input:focus')) { location.reload(); return; }
-    if (!IS_TV && was >= 2) toast(L('✓ رجع الاتصال بالرسيفر', '✓ Receiver connected again'), 'ok');
+    if (!IN_APP && oldCode && newCode && oldCode !== newCode && !document.querySelector('input:focus')) { location.reload(); return; }
+    if (!IN_APP && was >= 2) toast(L('✓ رجع الاتصال بالرسيفر', '✓ Receiver connected again'), 'ok');
     const le = j.lastExport || {};
-    if (IS_TV && le.t && le.remote && ui.seenExport !== undefined && le.t !== ui.seenExport && !ui.forced) {
+    if (IN_APP && le.t && le.remote && ui.seenExport !== undefined && le.t !== ui.seenExport && !ui.forced) {
       ui.seenExport = le.t;
       const fn = esc(le.name || 'M3U_TV.m3u');
       modal(`<div class="onb"><h2>📱 ${L('وصلت قائمة جديدة من الجوال', 'A new list arrived from the phone')}</h2>
@@ -1671,7 +1797,7 @@
     } else if (ui.seenExport === undefined) ui.seenExport = le.t || 0;
     INFO = Object.assign(INFO, j);
   }
-  setInterval(liveTick, IS_TV ? 4000 : 8000);
+  setInterval(liveTick, IN_APP ? 4000 : 8000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) liveTick(); });
   if (!IS_TV) document.addEventListener('touchstart', e => { const i = e.target.closest && e.target.closest('input'); if (i && i.readOnly) { i.readOnly = false; i.removeAttribute('readonly'); } }, { passive: true, capture: true });
 

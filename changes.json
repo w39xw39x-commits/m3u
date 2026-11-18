@@ -1,16 +1,20 @@
 {
   "notes": [
-    "التحكم من الجوال: الكتابة تشتغل في كل الخانات على كل الجوالات",
-    "الإرسال من الجوال: تأكيد واضح إن القائمة وصلت للرسيفر، ورسالة تطلع على شاشة الرسيفر",
-    "التطبيق يبقى شغّال في الخلفية عشان الجوال ما ينقطع عن الرسيفر",
-    "الملف يظهر مباشرة في Download وفي IP Channels بعد الحفظ",
-    "صفحة الجوال تتحدّث لحالها إذا تحدّث التطبيق في الرسيفر"
+    "اختيار طريقة العرض عند أول تشغيل: TV أو MOBILE، وتقدر تغيّرها من الإعدادات",
+    "على الجوال والتابلت: الكيبورد يطلع مباشرة، وزر 📋 للصق الرابط وبيانات Xtream",
+    "لصق رابط الاشتراك كامل في خانة سيرفر Xtream يعبّي اسم المستخدم وكلمة المرور تلقائياً",
+    "صفحة جديدة لنتيجة فحص القنوات: المتوقفة أولاً، معاينة، تحديد وحذف، وإعادة فحص",
+    "زر تراجع بعد الحذف",
+    "التمرير بالريموت يشتغل في كل النوافذ والقوائم",
+    "النوافذ والخطوط صارت تناسب كل الشاشات"
   ],
   "notes_en": [
-    "Phone control: typing works in every field on every phone",
-    "Sending from the phone: clear confirmation that the list reached the receiver, plus a message on the TV",
-    "The app keeps running in the background so the phone stays connected",
-    "The file shows up right away in Download and in IP Channels",
-    "The phone page refreshes itself when the receiver app updates"
+    "Choose the display on first launch: TV or MOBILE (changeable in Settings)",
+    "On phones and tablets the keyboard opens right away, plus a 📋 paste button",
+    "Pasting a full subscription link in the Xtream server field fills username and password",
+    "New channel-check results page: stopped first, preview, select & delete, re-check",
+    "Undo after deleting",
+    "Remote scrolling works in every window and list",
+    "Windows and text now fit every screen"
   ]
 }

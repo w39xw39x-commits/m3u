@@ -120,6 +120,37 @@ public class MainActivity extends Activity {
 
     /** Native text box: reliable TV keyboard (also works with phone remote apps). */
     class Bridge {
+        /** "tv" for remote-driven devices (TV boxes, receivers, smart TVs), "mobile" for touch phones/tablets. */
+        @JavascriptInterface
+        public String deviceKind() {
+            try {
+                android.app.UiModeManager um = (android.app.UiModeManager) getSystemService(UI_MODE_SERVICE);
+                if (um != null && um.getCurrentModeType() == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION) return "tv";
+                PackageManager pm = getPackageManager();
+                if (pm.hasSystemFeature("android.software.leanback")) return "tv";
+                if (!pm.hasSystemFeature("android.hardware.touchscreen")) return "tv";
+            } catch (Throwable ignored) { }
+            return "mobile";
+        }
+
+        @JavascriptInterface
+        public String getMode() { return getSharedPreferences("m3u", MODE_PRIVATE).getString("mode", ""); }
+
+        @JavascriptInterface
+        public void setMode(String m) { getSharedPreferences("m3u", MODE_PRIVATE).edit().putString("mode", m == null ? "" : m).apply(); }
+
+        @JavascriptInterface
+        public String clipboard() {
+            try {
+                android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                if (cm != null && cm.hasPrimaryClip() && cm.getPrimaryClip().getItemCount() > 0) {
+                    CharSequence t = cm.getPrimaryClip().getItemAt(0).coerceToText(MainActivity.this);
+                    return t == null ? "" : t.toString();
+                }
+            } catch (Throwable ignored) { }
+            return "";
+        }
+
         @JavascriptInterface
         public void prompt(final String id, final String title, final String value, final boolean password) {
             runOnUiThread(() -> {
