@@ -51,6 +51,10 @@
             </intent-filter>
         </activity>
 
+        <activity android:name=".MainActivity$PlayerActivity" android:exported="false"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode"
+            android:launchMode="singleTop" />
         <service android:name=".MainActivity$ServerService" android:exported="false" />
         <receiver android:name=".MainActivity$InstallReceiver" android:exported="false" />
         <receiver android:name=".MainActivity$UpdatedReceiver" android:exported="false">

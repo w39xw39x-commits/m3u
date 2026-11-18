@@ -289,20 +289,20 @@
   }
   function computeAll() {
     if (MEMO) return MEMO;
-    const C = cfg(), claimed = new Set();
+    const C = cfg(), claimed = new Set(), HG = C.hideG || {};
     MEMO = new Map(); MEMOSET = new Map();
     for (const pk of C.pk) {
       const base = basesFor(pk, C.opt);
       const rem = new Set(pk.rem || []);
       const list = [], inList = new Set();
       for (const c of base) {
-        if (rem.has(c.k)) continue;
+        if (rem.has(c.k) || HG[c.g]) continue;
         if (!C.opt.dup && claimed.has(c.k)) continue;
         list.push(c); inList.add(c.k);
       }
       for (const k of pk.add || []) {
         const c = BYK.get(k);
-        if (c && !inList.has(k) && !rem.has(k)) { list.push(c); inList.add(k); }
+        if (c && !inList.has(k) && !rem.has(k) && !HG[c.g]) { list.push(c); inList.add(k); }
       }
       if (pk.ord && pk.ord.length) {
         const pos = new Map(pk.ord.map((k, i) => [k, i]));
@@ -379,6 +379,43 @@
     }
     return { text: L.join('\n') + '\n', count: n, per };
   }
+
+  /* ---------------------------------------------------------------- built-in player */
+  const canPlayer = () => IN_APP && BR && typeof BR.openPlayer === 'function';
+  function playerItems() {
+    // the exact order and numbers the receiver will get
+    const C = cfg(), M = computeAll(), out = [];
+    let n = 0;
+    for (const pk of C.pk) {
+      if (!pk.on) continue;
+      const list = M.get(pk.id) || [];
+      for (const c of list) { n++; out.push({ n, name: dispName(c), url: c.u, pack: pk.ic + ' ' + pkName(pk), pid: pk.id, logo: c.l || '', k: c.k }); }
+    }
+    return out;
+  }
+  function openPlayer(c, opts) {
+    opts = opts || {};
+    let items = playerItems(), start = 0;
+    if (c) {
+      start = items.findIndex(x => x.k === c.k && (!ui.pk || x.pid === ui.pk));
+      if (start < 0) start = items.findIndex(x => x.k === c.k);
+      if (start < 0) { // channel is not in the file (browsing provider groups): play its group on its own
+        const g = GROUPS.find(x => x.name === c.g), list = g ? g.list : [c];
+        items = list.map((x, i) => ({ n: i + 1, name: dispName(x), url: x.u, pack: '🗂️ ' + x.g, pid: '', logo: x.l || '', k: x.k }));
+        start = Math.max(0, list.indexOf(c)); opts.preview = false;
+      }
+    }
+    if (!items.length) return toast(L('لا توجد قنوات؛ فعّل باقة واحدة على الأقل', 'No channels; enable a package first'), 'bad');
+    const qi = cfg().qi || {};
+    const data = { items: items.map(x => ({ n: x.n, name: x.name, url: x.url, pack: x.pack, logo: x.logo, dead: !!(qi[x.k] && qi[x.k].fail) })),
+      start, preview: opts.preview !== false, lang: S.settings.lang || 'ar', total: items.length };
+    try { BR.openPlayer(JSON.stringify(data)); } catch (e) { toast(L('تعذر فتح المشغّل', 'Could not open the player'), 'bad'); }
+  }
+  window.onPlayerDone = function (r) {
+    // r: {send:true} when the user pressed "send" inside the player
+    try { r = typeof r === 'string' ? JSON.parse(r) : r; } catch (e) { r = {}; }
+    if (r && r.send) { go('export'); setTimeout(() => ACT.doExport(), 300); }
+  };
 
   /* ---------------------------------------------------------------- sources */
   function detectLink(raw) {
@@ -913,6 +950,7 @@
           <button class="sw f ${pk.on ? 'on' : ''}" data-act="pkToggle" data-arg="${pk.id}" data-fid="ph-on"><i></i></button>
           <button class="btn f" data-act="pkAddCh" data-arg="${pk.id}" data-fid="ph-add">＋ إضافة قنوات</button>
           <button class="btn f" data-act="pkSort" data-arg="${pk.id}" data-fid="ph-sort">⇅ ترتيب تلقائي</button>
+          ${canPlayer() ? `<button class="btn f" data-act="playerPk" data-arg="${pk.id}" data-fid="ph-play">▶ ${L('تشغيل', 'Play')}</button>` : ''}
           <button class="btn f" data-act="pkProbe" data-arg="${pk.id}" data-fid="ph-probe">🩺 فحص القنوات</button>
           <button class="btn f" data-act="pkEdit" data-arg="${pk.id}" data-fid="ph-edit">✎ الإعدادات</button>
         </div></div>
@@ -965,22 +1003,31 @@
 
   VIEWS.browse = function () {
     if (!CH.length) return needSource();
-    let groups = GROUPS;
+    const HG = cfg().hideG || {};
     const o = cfg().opt;
     if (ui.q) {
       const q = ui.q.toLowerCase();
-      const chs = CH.filter(c => c.n.toLowerCase().includes(q) || c.g.toLowerCase().includes(q));
+      const chs = CH.filter(c => !HG[c.g] && (c.n.toLowerCase().includes(q) || c.g.toLowerCase().includes(q)));
       const start = ui.page * PAGE;
       return browseHead() + `<p class="mut">${fmtN(chs.length)} ${L('نتيجة', 'results')}</p><div class="list">${chs.slice(start, start + PAGE).map((c, i) => chRow(c, start + i, 'browse')).join('')}</div>` + pager(chs.length);
     }
+    const nHid = GROUPS.filter(g => HG[g.name]).length;
+    const groups = ui.showHidden ? GROUPS.filter(g => HG[g.name]) : GROUPS.filter(g => !HG[g.name]);
     const start = ui.page * PAGE;
     const rows = groups.slice(start, start + PAGE).map((g, i) => {
+      const gi = GROUPS.indexOf(g), hid = !!HG[g.name];
       const live = g.list.filter(c => c.t === 'live').length;
-      return `<div class="row"><button class="rowmain f ${i === 0 ? 'auto' : ''}" data-act="grpOpen" data-arg="${start + i}" data-fid="g-${start + i}">
-        <span class="gic">🗂️</span><span class="nm"><b class="nt">${esc(g.name)}</b><small>${fmtN(g.list.length)} قناة${live !== g.list.length ? ' · ' + fmtN(live) + ' مباشر' : ''}</small></span></button>
-        <button class="btn sm f" data-act="grpToPk" data-arg="${start + i}" data-fid="g-${start + i}-p">＋ إلى باقة</button></div>`;
+      return `<div class="row ${hid ? 'gh' : ''}"><button class="rowmain f ${i === 0 ? 'auto' : ''}" data-act="${hid ? 'grpHide' : 'grpOpen'}" data-arg="${gi}" data-fid="g-${gi}">
+        <span class="gic">🗂️</span><span class="nm"><b class="nt">${esc(g.name)}</b><small>${hid ? L('مخفية', 'Hidden') + ' · ' : ''}${fmtN(g.list.length)} ${L('قناة', 'ch')}${!hid && live !== g.list.length ? ' · ' + fmtN(live) + ' ' + L('مباشر', 'live') : ''}</small></span></button>
+        ${hid ? '' : `<button class="btn sm f" data-act="grpToPk" data-arg="${gi}" data-fid="g-${gi}-p">＋ ${L('إلى باقة', 'To package')}</button>`}
+        <button class="sw f ${hid ? '' : 'on'}" data-act="grpHide" data-arg="${gi}" data-fid="g-${gi}-h" aria-label="show/hide"><i></i></button></div>`;
     }).join('');
-    return browseHead() + `<div class="list">${rows}</div>` + pager(groups.length);
+    const tools = `<div class="bar gtools">
+        ${ui.showHidden ? `<button class="btn f" data-act="grpShowHidden" data-fid="g-back">↩ ${L('كل الباقات', 'All groups')}</button><button class="btn f" data-act="grpVis" data-arg="show" data-fid="g-showall">${L('إظهار الكل', 'Show all')}</button>`
+          : `<button class="btn f" data-act="grpVis" data-arg="hide" data-fid="g-hideall">${L('إخفاء الكل', 'Hide all')}</button>${nHid ? `<button class="btn f" data-act="grpVis" data-arg="show" data-fid="g-showall">${L('إظهار الكل', 'Show all')}</button>` : ''}`}
+        <span class="mut small">${fmtN(GROUPS.length - nHid)} / ${fmtN(GROUPS.length)}</span></div>`;
+    const hidRow = !ui.showHidden && nHid ? `<button class="hidrow f" data-act="grpShowHidden" data-fid="g-hid">${L('الباقات المخفية', 'Hidden groups')}<span>${fmtN(nHid)} ‹</span></button>` : '';
+    return browseHead() + tools + `<div class="list">${rows || `<div class="empty"><p>${L('لا توجد باقات هنا', 'Nothing here')}</p></div>`}</div>` + pager(groups.length) + hidRow;
   };
   function browseHead() {
     const tp = pkById(ui.target) || pkById('fav');
@@ -1017,7 +1064,7 @@
       <button class="btn sm f" data-act="perm" data-fid="ex-perm">منح الصلاحية</button></div>` : '';
     return `${permBox}<div class="card send">
         <div class="sendrow"><div class="sendinfo"><b class="ltr">${fmtN(b.count)}</b> <span>${L('قناة في ' + fmtN(b.per.length) + ' باقة', 'channels in ' + fmtN(b.per.length) + ' packages')} · <span class="ltr">${fmtMB(sz)}</span></span></div>
-        <button class="btn pri huge f auto" data-act="doExport" data-fid="ex-go">🚀 حفظ القائمة وإرسالها إلى الرسيفر</button></div>
+        <div class="sendbtns">${canPlayer() ? `<button class="btn huge f" data-act="playerAll" data-fid="ex-play">▶ ${L('معاينة الملف', 'Preview the list')}</button>` : ''}<button class="btn pri huge f auto" data-act="doExport" data-fid="ex-go">🚀 حفظ القائمة وإرسالها إلى الرسيفر</button></div></div>
         ${IN_APP ? '' : `<p class="mut small" style="margin-top:10px">${L('الزر الكبير يحفظ القائمة مباشرة في الرسيفر.', 'The big button saves the list straight to the receiver.')} <button class="btn sm f" data-act="download" data-fid="ex-dl">⬇ ${L('نسخة احتياطية على هذا الجهاز', 'Backup copy on this device')}</button></p>`}
         ${b.count > 5000 ? '<p class="warnbox">⚠ عدد كبير من القنوات؛ إذا رفض الرسيفر الاستيراد قلّل الباقات المفعّلة.</p>' : ''}
         ${result}</div>
@@ -1166,6 +1213,21 @@
     go: v => go(v),
     page: p => { ui.page = Math.max(0, +p); ui.move = null; render(true); },
     closeModal: () => closeModal(),
+    playerAll: () => openPlayer(null, { preview: true }),
+    playerPk: id => { const l = members(id); if (!l.length) return toast(L('الباقة فاضية', 'Empty package'), 'bad'); openPlayer(l[Math.min(ui.page * PAGE, l.length - 1)]); },
+    grpHide: i => {
+      const g = GROUPS[+i]; if (!g) return; const C = cfg(), HG = C.hideG || (C.hideG = {});
+      if (HG[g.name]) delete HG[g.name]; else HG[g.name] = 1;
+      if (ui.showHidden && !Object.keys(HG).length) ui.showHidden = false;
+      changed(); render();
+    },
+    grpVis: m => {
+      const C = cfg();
+      if (m === 'hide') { C.hideG = {}; for (const g of GROUPS) C.hideG[g.name] = 1; ui.showHidden = true; toast(L('اختر الباقات اللي تبيها وفعّلها', 'Now switch on the groups you want'), 'ok'); }
+      else { C.hideG = {}; ui.showHidden = false; }
+      ui.page = 0; changed(); render(true);
+    },
+    grpShowHidden: () => { ui.showHidden = !ui.showHidden; ui.page = 0; render(true); },
     setDisp: m => { try { BR && BR.setMode && BR.setMode(m); } catch (e) { } location.reload(); },
     modePick: () => modePicker(),
     pasteTo: id => {
@@ -1764,6 +1826,7 @@
     },
     pvPlay: async i => {
       const c = chAt(i);
+      if (canPlayer()) return openPlayer(c);
       let j = { ok: false };
       try { j = await (await fetch('/api/play?url=' + enc(c.u))).json(); } catch (e) { }
       if (!j.ok) toast(L('لا يوجد مشغّل فيديو في الرسيفر', 'No video player on the receiver'), 'bad');

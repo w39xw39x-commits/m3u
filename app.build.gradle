@@ -44,3 +44,10 @@ android {
         checkReleaseBuilds false
     }
 }
+
+dependencies {
+    // built-in player: plays live TS / HLS streams from any provider
+    implementation 'androidx.media3:media3-exoplayer:1.4.1'
+    implementation 'androidx.media3:media3-exoplayer-hls:1.4.1'
+    implementation 'androidx.media3:media3-ui:1.4.1'
+}

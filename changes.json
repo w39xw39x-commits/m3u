@@ -1,24 +1,16 @@
 {
   "notes": [
-    "فحص القنوات صار أدق بكثير: كل قناة ما ردّت تنفحص مرة ثانية، والقنوات المشغولة ما تنحسب متوقفة",
-    "حالة جديدة 🟡 «غير مؤكد» للقنوات اللي سيرفرها ما ردّ بوضوح، عشان ما تنحذف بالغلط",
-    "اختيار طريقة العرض عند أول تشغيل: TV أو MOBILE، وتقدر تغيّرها من الإعدادات",
-    "على الجوال والتابلت: الكيبورد يطلع مباشرة، وزر 📋 للصق الرابط وبيانات Xtream",
-    "لصق رابط الاشتراك كامل في خانة سيرفر Xtream يعبّي اسم المستخدم وكلمة المرور تلقائياً",
-    "صفحة جديدة لنتيجة فحص القنوات: المتوقفة أولاً، معاينة، تحديد وحذف، وإعادة فحص",
-    "زر تراجع بعد الحذف",
-    "التمرير بالريموت يشتغل في كل النوافذ والقوائم",
-    "النوافذ والخطوط صارت تناسب كل الشاشات"
+    "مشغّل مدمج لتقليب قنواتك بسلاسة",
+    "معاينة ملفك بترتيبه وأرقامه قبل الإرسال",
+    "إخفاء باقات المزود بلمسة",
+    "فحص أدق للقنوات",
+    "خط عربي جديد وتصميم أنيق"
   ],
   "notes_en": [
-    "Much more accurate channel check: every failed channel is checked again, busy channels are not marked stopped",
-    "New 🟡 'Unsure' state for channels whose server did not answer clearly, so they are not deleted by mistake",
-    "Choose the display on first launch: TV or MOBILE (changeable in Settings)",
-    "On phones and tablets the keyboard opens right away, plus a 📋 paste button",
-    "Pasting a full subscription link in the Xtream server field fills username and password",
-    "New channel-check results page: stopped first, preview, select & delete, re-check",
-    "Undo after deleting",
-    "Remote scrolling works in every window and list",
-    "Windows and text now fit every screen"
+    "Built-in player with smooth zapping",
+    "Preview your list, order and numbers before sending",
+    "Hide provider groups in one tap",
+    "More accurate channel check",
+    "New Arabic typeface and a refined look"
   ]
 }
