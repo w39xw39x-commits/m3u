@@ -350,3 +350,5 @@ label.fl{display:block;font-size:13px;color:var(--mut);margin:12px 0 6px;font-we
 .pvinfo{font-size:17px;font-weight:700;text-align:center;color:var(--c1);margin:10px 0 4px}
 .tag.qreal{border:1px solid rgba(255,255,255,.35)}
 .tag.qx{background:var(--bad);color:#fff}
+
+.ib.play{color:var(--c1);border-color:rgba(34,211,238,.45)}

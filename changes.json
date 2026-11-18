@@ -1,18 +1,16 @@
 {
   "notes": [
-    "جديد: معاينة القنوات داخل التطبيق مع الجودة الحقيقية (الدقة وسرعة التشغيل)، واحذف أو أبقِ القناة بضغطة",
-    "الكتابة واللصق من الجوال تعمل بدون أي تعليق",
-    "نافذة التحديث الإجباري تظهر على شاشة الرسيفر فقط، ولا تمنع الجوال من الكتابة",
-    "واجهة أخف وأوضح عند الفتح من الجوال",
-    "واجهة تملأ شاشة الجوال والتابلت بالكامل مع شريط تنقل سفلي",
-    "إظهار رقم النسخة الصحيح في القائمة"
+    "معاينة أسرع: زر ▶ بجانب كل قناة يشغّلها مباشرة في مشغّل الفيديو",
+    "إصلاح: زر الرجوع من المشغّل لا يعيدك لأول القائمة",
+    "فحص الجودة الحقيقية: سرعة البث (Mbps) وتقدير الدقة 4K / FHD / HD",
+    "واجهة تملأ شاشة الجوال والتابلت مع شريط تنقل سفلي",
+    "الكتابة واللصق من الجوال تعمل بدون تعليق"
   ],
   "notes_en": [
-    "New: in-app channel preview with real quality (resolution and start time), keep or delete in one tap",
-    "Typing and pasting from the phone work smoothly",
-    "The mandatory update window shows only on the receiver screen and never blocks the phone",
-    "Lighter, clearer layout when opened from a phone",
+    "Faster preview: a ▶ button next to every channel plays it right away",
+    "Fix: Back from the player no longer jumps to the top of the list",
+    "Real quality check: stream bitrate (Mbps) and estimated 4K / FHD / HD",
     "Full-screen phone and tablet layout with a bottom navigation bar",
-    "Correct version number shown in the menu"
+    "Typing and pasting from the phone work smoothly"
   ]
 }

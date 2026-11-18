@@ -720,9 +720,12 @@
       <button class="btn pri f auto" data-act="go" data-arg="subs">إضافة اشتراك</button></div>`;
   }
   const realQ = h => h >= 2000 ? '4K' : h >= 1000 ? '1080p' : h >= 700 ? '720p' : h > 0 ? h + 'p' : '';
+  const kbpsQ = k => k >= 15000 ? '4K' : k >= 5000 ? 'FHD' : k >= 2500 ? 'HD' : k > 0 ? 'SD' : '';
+  const fmtRate = k => k >= 1000 ? (k / 1000).toFixed(1) + ' Mbps' : k + ' kbps';
   function qualTag(c) {
     const qi = (cfg().qi || {})[c.k];
     if (qi && qi.fail) return '<span class="tag qx">✕</span>';
+    if (qi && qi.kbps && !qi.h) { const q = kbpsQ(qi.kbps); return `<span class="tag qreal ${q === '4K' ? 'q4' : q === 'FHD' ? 'q3' : q === 'HD' ? 'q2' : ''}">≈${q} ✓</span>`; }
     if (qi && qi.h) return `<span class="tag qreal ${qi.h >= 2000 ? 'q4' : qi.h >= 1000 ? 'q3' : qi.h >= 700 ? 'q2' : ''}">${realQ(qi.h)} ✓</span>`;
     return qTag(c.q);
   }
@@ -818,7 +821,8 @@
     const fid = 'r-' + c.i;
     let acts = '';
     if (mode === 'pack') {
-      acts = `<button class="ib f" data-act="chMove" data-arg="${c.i}" data-fid="${fid}-m" title="تحريك">⇅</button>
+      acts = `<button class="ib play f" data-act="pvPlay" data-arg="${c.i}" data-fid="${fid}-p" title="معاينة">▶</button>
+        <button class="ib f" data-act="chMove" data-arg="${c.i}" data-fid="${fid}-m" title="تحريك">⇅</button>
         ${pk.id !== 'fav' ? `<button class="ib star f ${fav ? 'on' : ''}" data-act="chFav" data-arg="${c.i}" data-fid="${fid}-f">★</button>` : ''}
         <button class="ib f" data-act="chMenu" data-arg="${c.i}" data-fid="${fid}-o" title="خيارات">⋯</button>
         <button class="ib del f" data-act="chRemove" data-arg="${c.i}" data-fid="${fid}-x" title="حذف من الباقة">✕</button>`;
@@ -827,7 +831,8 @@
     } else {
       const tp = pkById(ui.target) || pkById('fav');
       const on = inPk(tp, c);
-      acts = `<button class="ib star f ${fav ? 'on' : ''}" data-act="chFav" data-arg="${c.i}" data-fid="${fid}-f">★</button>
+      acts = `<button class="ib play f" data-act="pvPlay" data-arg="${c.i}" data-fid="${fid}-p" title="معاينة">▶</button>
+        <button class="ib star f ${fav ? 'on' : ''}" data-act="chFav" data-arg="${c.i}" data-fid="${fid}-f">★</button>
         <button class="ib f" data-act="chMenu" data-arg="${c.i}" data-fid="${fid}-o">⋯</button>
         <button class="addbtn f ${on ? 'on' : ''}" data-act="chTarget" data-arg="${c.i}" data-fid="${fid}-t" style="${cv(tp.col)}">${on ? '✓ في ' : '＋ '}${esc(pkName(tp))}</button>`;
     }
@@ -854,7 +859,6 @@
           <button class="sw f ${pk.on ? 'on' : ''}" data-act="pkToggle" data-arg="${pk.id}" data-fid="ph-on"><i></i></button>
           <button class="btn f" data-act="pkAddCh" data-arg="${pk.id}" data-fid="ph-add">＋ إضافة قنوات</button>
           <button class="btn f" data-act="pkSort" data-arg="${pk.id}" data-fid="ph-sort">⇅ ترتيب تلقائي</button>
-          <button class="btn pri f" data-act="pvStart" data-arg="${pk.id}" data-fid="ph-pv">👁 معاينة القنوات</button>
           <button class="btn f" data-act="pkProbe" data-arg="${pk.id}" data-fid="ph-probe">🩺 فحص القنوات</button>
           <button class="btn f" data-act="pkEdit" data-arg="${pk.id}" data-fid="ph-edit">✎ الإعدادات</button>
         </div></div>
@@ -1004,9 +1008,8 @@
       <div class="bar"><input class="in rtl f" id="m-name" value="${esc(dispName(c))}"><button class="btn f" data-act="mRename" data-arg="${c.i}">حفظ</button></div>
       <label class="fl">الباقات (اضغط للإضافة/الإزالة)</label><div class="pkpicks">${btns}</div>
       <div class="bar">
-        <button class="btn pri f" data-act="pvOne" data-arg="${c.i}">👁 معاينة وجودة</button>
-        <button class="btn f" data-act="mPlay" data-arg="${c.i}">▶ تشغيل في مشغّل خارجي</button>
-        <button class="btn f" data-act="mProbe" data-arg="${c.i}">🩺 فحص الرابط</button>
+        <button class="btn pri f" data-act="pvPlay" data-arg="${c.i}">▶ معاينة</button>
+        <button class="btn f" data-act="mProbe" data-arg="${c.i}">📶 فحص الجودة</button>
         ${ui.view === 'pack' && !ui.showRem ? `<button class="btn f" data-act="mPos" data-arg="${c.i}">#️⃣ نقل إلى رقم</button>` : ''}
         <span id="m-probe" class="mut"></span></div>
       <div class="bar end"><button class="btn pri f auto" data-act="closeModal">تم</button></div>`);
@@ -1238,7 +1241,19 @@
     mToggle: a => { const [id, i] = a.split('|'), pk = pkById(id), c = chAt(i); if (inPk(pk, c)) removeFrom(pk, c); else addTo(pk, c); chMenu(c); },
     mRename: i => { const c = chAt(i), v = $('#m-name').value.trim(); if (v && v !== c.n) cfg().cren[c.k] = v; else delete cfg().cren[c.k]; changed(); toast('تم ✓', 'ok'); },
     mPlay: i => fetch('/api/play?url=' + enc(chAt(i).u)).then(r => r.json()).then(j => toast(j.ok ? 'جاري التشغيل…' : 'لا يوجد مشغل فيديو', j.ok ? 'ok' : 'bad')),
-    mProbe: async i => { const el = $('#m-probe'); el.textContent = '…'; const r = await (await fetch('/api/probe?url=' + enc(chAt(i).u))).json(); el.innerHTML = r.ok ? `<span class="ok">✓ تعمل (${r.ms}ms)</span>` : `<span class="bad">✕ لا تعمل (${r.code || r.error || ''})</span>`; },
+    mProbe: async i => {
+      const c = chAt(i), el = $('#m-probe');
+      el.textContent = L('⏳ جاري قياس الجودة (4 ثواني)…', '⏳ Measuring quality (4 s)…');
+      let r; try { r = await (await fetch('/api/probe?measure=1&url=' + enc(c.u))).json(); } catch (e) { r = { ok: false }; }
+      const qi = cfg().qi || (cfg().qi = {});
+      if (r.ok) {
+        qi[c.k] = { kbps: r.kbps, ms: r.ms }; save();
+        el.innerHTML = `<span class="ok">✓ ${L('تعمل', 'Working')}</span> · <b>≈ ${kbpsQ(r.kbps)}</b> · <span class="ltr">${fmtRate(r.kbps)}</span> · ${L('استجابة', 'response')} <span class="ltr">${(r.ms / 1000).toFixed(1)}s</span>`;
+      } else {
+        qi[c.k] = { fail: true }; save();
+        el.innerHTML = `<span class="bad">✕ ${L('لا تعمل', 'Not working')}${r.code ? ' (' + r.code + ')' : ''}</span>`;
+      }
+    },
     mPos: i => {
       const c = chAt(i);
       modal(`<h2>نقل "${esc(dispName(c))}" إلى الرقم</h2><input class="in f auto" id="m-pos" type="number" min="1" value="1">
@@ -1527,6 +1542,13 @@
       }
     },
     checkUpd: () => checkUpdate(true),
+    pvPlay: async i => {
+      const c = chAt(i);
+      let j = { ok: false };
+      try { j = await (await fetch('/api/play?url=' + enc(c.u))).json(); } catch (e) { }
+      if (!j.ok) toast(L('لا يوجد مشغّل فيديو في الرسيفر', 'No video player on the receiver'), 'bad');
+      else if (!IS_TV) toast(L('▶ تعمل الآن على شاشة الرسيفر', '▶ Now playing on the receiver screen'), 'ok');
+    },
     pvAct: a => window.onPreviewAction(a, PV.info),
     pvStart: id => { const list = members(id); const start = Math.min(ui.page * PAGE, Math.max(0, list.length - 1)); previewStart(list, start, id); },
     pvOne: i => {

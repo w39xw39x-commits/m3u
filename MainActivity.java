@@ -65,6 +65,7 @@ public class MainActivity extends Activity {
     static volatile File pickTarget;
     static final int REQ_PICK = 42;
     private WebView web;
+    private boolean backDown;   // only react to a BACK press that started in this app
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -103,6 +104,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        backDown = false;
         current = this;
         if (web != null) web.evaluateJavascript("window.onAppResume&&window.onAppResume()", null);
     }
@@ -321,7 +323,10 @@ public class MainActivity extends Activity {
     public boolean dispatchKeyEvent(KeyEvent event) {
         // Remote "back" goes to the web UI first; it decides whether to leave the app.
         if (event.getKeyCode() == KeyEvent.KEYCODE_BACK && web != null) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN) { backDown = true; return true; }
             if (event.getAction() == KeyEvent.ACTION_UP) {
+                if (!backDown) return true;          // key-up left over from the external player: ignore
+                backDown = false;
                 web.evaluateJavascript("(window.appBack&&window.appBack())?'1':'0'", value -> {
                     if (value == null || !value.contains("1")) finish();
                 });

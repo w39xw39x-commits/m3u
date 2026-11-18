@@ -236,7 +236,7 @@ public class WebServer {
                         + ",\"total\":" + upd.getOrDefault("total", -1L) + ",\"error\":" + js((String) upd.get("error")) + "}");
                 return;
             case "/api/probe":
-                json(out, probe(q.get("url")));
+                json(out, probe(q.get("url"), q.get("measure") != null ? 3000 : 0));
                 return;
             case "/api/export":
                 json(out, export(q.get("name"), body));
@@ -382,22 +382,36 @@ public class WebServer {
         }
     }
 
-    private String probe(String url) {
+    private String probe(String url) { return probe(url, 0); }
+
+    /** Checks a stream; with measureMs > 0 it also reads the stream for that long to estimate the bitrate. */
+    private String probe(String url, int measureMs) {
         long t0 = System.currentTimeMillis();
         try {
             HttpURLConnection c = open(url, 8000, 8000);
             int code = c.getResponseCode();
             String type = c.getContentType();
-            int got = 0;
+            long got = 0, first = -1, tStart = 0;
             try (InputStream is = bodyStream(c)) {
-                byte[] buf = new byte[4096];
+                byte[] buf = new byte[16384];
                 int r;
-                while (got < 8192 && (r = is.read(buf)) != -1) got += r;
+                long warm = 0; boolean measuring = false;   // skip the first second: servers burst their buffer
+                while ((r = is.read(buf)) != -1) {
+                    long now = System.currentTimeMillis();
+                    if (first < 0) { first = now - t0; warm = now; }
+                    if (measureMs <= 0) { got += r; if (got >= 8192) break; continue; }
+                    if (!measuring) { if (now - warm >= 1000) { measuring = true; tStart = now; } else { got = Math.max(got, 1); continue; } }
+                    got += r;
+                    if (now - tStart >= measureMs) break;
+                }
+                if (measureMs > 0 && !measuring) tStart = warm;
             } catch (Exception ignored) { }
             c.disconnect();
+            long dur = Math.max(1, System.currentTimeMillis() - tStart);
+            long kbps = measureMs > 0 && got > 0 ? (got * 8L) / dur : 0;
             boolean ok = code >= 200 && code < 400 && got > 0;
             return "{\"ok\":" + ok + ",\"code\":" + code + ",\"type\":" + js(type) + ",\"bytes\":" + got
-                    + ",\"ms\":" + (System.currentTimeMillis() - t0) + "}";
+                    + ",\"ms\":" + (first < 0 ? System.currentTimeMillis() - t0 : first) + ",\"kbps\":" + kbps + "}";
         } catch (Exception e) {
             return "{\"ok\":false,\"code\":0,\"error\":" + js(String.valueOf(e.getMessage())) + ",\"ms\":"
                     + (System.currentTimeMillis() - t0) + "}";
