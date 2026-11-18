@@ -1,10 +1,8 @@
 {
   "notes": [
-    "الفتح التلقائي بعد التحديث: فعّل «العرض فوق التطبيقات» مرة وحدة، وبعدها التطبيق يرجع يفتح لحاله بعد كل تحديث",
-    "التحديث يتحمّل تلقائياً — فقط اضغط «تحديث» في نافذة النظام"
+    "تحديث تجريبي: التأكد من إن التطبيق يرجع يفتح لحاله بعد التثبيت"
   ],
   "notes_en": [
-    "Auto-reopen after updates: allow “Display over other apps” once, then the app reopens by itself after every update",
-    "Updates download automatically — just press “Update” in the system window"
+    "Test update: checking that the app reopens by itself after installing"
   ]
 }
