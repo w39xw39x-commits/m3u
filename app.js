@@ -351,10 +351,58 @@
     if (inPk(f, c)) removeFrom(f, c); else addTo(f, c);
   }
 
-  function buildM3U() {
+  /* ---------------------------------------------------------------- new channels after a subscription refresh
+     A compact fingerprint (name key + stream url) of every channel the receiver already has is kept per
+     subscription; after a refresh, channels matching neither are "new". */
+  const h36 = s => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36); };
+  const chSig = c => [h36(c.k), h36(c.u)];
+  function markSeen(list) {
+    const C = cfg();
+    if (list) { const a = C.seen ? C.seen.split(',') : []; for (const c of list) a.push(...chSig(c)); C.seen = a.join(','); }
+    else { const a = []; for (const c of CH) a.push(...chSig(c)); C.seen = a.join(','); C.news = []; C.seenAt = Date.now(); C.seenVod = CH.some(c => c.t !== 'live') ? 1 : 0; }
+    save();
+  }
+  function findNews() {
+    const C = cfg();
+    if (!C.seen) { markSeen(); return []; }
+    if (!C.seenVod && CH.some(c => c.t !== 'live')) { markSeen(CH.filter(c => c.t !== 'live')); C.seenVod = 1; }  // movies/series just switched on: not "new" from the provider
+    const st = new Set(C.seen.split(',')), ok = poolOK(C.opt), HG = C.hideG || {};
+    const list = CH.filter(c => { if (!ok(c) || HG[c.g]) return false; const [x, y] = chSig(c); return !st.has(x) && !st.has(y); });
+    C.news = list.map(c => c.k); save();
+    return list;
+  }
+  const sinceTxt = () => { const t = cfg().seenAt; if (!t) return ''; try { return new Date(t).toLocaleString(EN() ? 'en-GB' : 'ar-SA-u-nu-latn', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }); } catch (e) { return ''; } };
+  const newsList = () => (cfg().news || []).map(k => BYK.get(k)).filter(Boolean);
+  function newsByPack() {
+    const C = cfg(), M = computeAll(), list = newsList(), set = new Set(list.map(c => c.k)), groups = [], placed = new Set();
+    for (const pk of C.pk) {
+      if (!pk.on) continue;
+      const l = (M.get(pk.id) || []).filter(c => set.has(c.k));
+      if (l.length) { groups.push({ pk, list: l }); l.forEach(c => placed.add(c.k)); }
+    }
+    return { groups, rest: list.filter(c => !placed.has(c.k)), total: list.length, set };
+  }
+  function moveOnly(c, tp) {      // channel ends up in tp only (favorites copy is kept)
+    addTo(tp, c);
+    for (let g = 0; g < 5; g++) {
+      let hit = false;
+      for (const p of cfg().pk) { if (p === tp || p.id === 'fav') continue; if (inPk(p, c)) { removeFrom(p, c); hit = true; } }
+      if (!hit) break;
+    }
+    if (!inPk(tp, c)) addTo(tp, c);
+  }
+  async function postM3U(name, text) {
+    for (let k = 0; k < 3; k++) {
+      try { const res = await fetch('/api/export?name=' + enc(name) + '&t=' + Date.now(), { method: 'POST', body: text, cache: 'no-store' }); return await res.json(); }
+      catch (e) { await new Promise(z => setTimeout(z, 1200)); }
+    }
+    return null;
+  }
+
+  function buildM3U(only) {  // only: Set of channel keys → additions-only file (same order/numbers)
     const C = cfg(), o = C.opt, M = computeAll();
     const L = ['#EXTM3U'];
-    let n = 0;
+    let n = 0, out = 0;
     const q = s => String(s).replace(/"/g, "'");
     const per = [];
     for (const pk of C.pk) {
@@ -362,9 +410,11 @@
       const list = M.get(pk.id) || [];
       if (!list.length) continue;
       const title = (o.icons ? pk.ic + ' ' : '') + pkName(pk);
-      per.push({ pk, count: list.length });
+      let pc = 0;
       for (const c of list) {
         n++;
+        if (only && !only.has(c.k)) continue;
+        out++; pc++;
         const nm = dispName(c);
         let inf = '#EXTINF:-1';
         if (c.a['tvg-id']) inf += ` tvg-id="${q(c.a['tvg-id'])}"`;
@@ -376,8 +426,9 @@
         if (c.o) L.push(...c.o);
         L.push(c.u);
       }
+      if (pc) per.push({ pk, count: pc });
     }
-    return { text: L.join('\n') + '\n', count: n, per };
+    return { text: L.join('\n') + '\n', count: out, per };
   }
 
   /* ---------------------------------------------------------------- built-in player */
@@ -396,6 +447,8 @@
   function openPlayer(c, opts) {
     opts = opts || {};
     let items = playerItems(), start = 0;
+    if (opts.only) items = items.filter(x => opts.only.has(x.k)).map((x, i) => Object.assign(x, { n: i + 1 }));
+    if (!opts.only) ui.playerCtx = '';
     if (c) {
       start = items.findIndex(x => x.k === c.k && (!ui.pk || x.pid === ui.pk));
       if (start < 0) start = items.findIndex(x => x.k === c.k);
@@ -414,7 +467,10 @@
   window.onPlayerDone = function (r) {
     // r: {send:true} when the user pressed "send" inside the player
     try { r = typeof r === 'string' ? JSON.parse(r) : r; } catch (e) { r = {}; }
-    if (r && r.send) { go('export'); setTimeout(() => ACT.doExport(), 300); }
+    if (r && r.send) {
+      if (ui.playerCtx === 'news') { ui.playerCtx = ''; setTimeout(() => ACT.newsSend(), 300); return; }
+      go('export'); setTimeout(() => ACT.doExport(), 300);
+    }
   };
 
   /* ---------------------------------------------------------------- sources */
@@ -523,10 +579,21 @@
       setLoading(L('ترتيب الباقات…', 'Building packages…'), 1);
       await new Promise(r => setTimeout(r, 16));
       setChannels(list);
+      const hadBase = !!cfg().seen;
+      const news = fromCache ? (hadBase ? null : (markSeen(), null)) : findNews();
       s.count = CH.length; s.updated = Date.now();
       save();
       ui.loading = null;
-      if (cfg().opt.asked) toast(L('تم جلب ' + fmtN(CH.length) + ' قناة ✓', fmtN(CH.length) + ' channels loaded ✓'), 'ok');
+      if (news && news.length > Math.max(200, CH.length * 0.25)) {   // the provider rebuilt its list: don't claim thousands of "new" channels blindly
+        go('packs');
+        modal(`<h2>⚠ ${L('المزود غيّر قائمته بشكل كبير', 'The provider changed its list a lot')}</h2>
+          <p class="mut">${L('ظهرت ' + fmtN(news.length) + ' قناة بأسماء وروابط مختلفة عن آخر إرسال. غالباً المزود أعاد ترتيب قائمته وليست كلها قنوات جديدة فعلاً.', fmtN(news.length) + ' channels have names and links that differ from your last send. The provider most likely rebuilt its list; not all of them are really new.')}</p>
+          <div class="bar end"><button class="btn f" data-act="newsSkipGo">${L('اعتبرها نفس قنواتي', 'Treat as my current channels')}</button><button class="btn pri f auto" data-act="newsShow">${L('اعرضها كجديدة', 'Show them as new')}</button></div>`);
+        return;
+      }
+      if (news && news.length) { toast(L('🆕 ' + fmtN(news.length) + ' قناة جديدة فعلاً منذ آخر إرسال', '🆕 ' + fmtN(news.length) + ' truly new channels since your last send'), 'ok'); go('news'); return; }
+      if (hadBase && news && s.type !== 'file') toast(L('✓ لا توجد قنوات جديدة منذ آخر إرسال', '✓ No new channels since your last send') + (sinceTxt() ? ' (' + sinceTxt() + ')' : ''), 'ok');
+      else if (cfg().opt.asked) toast(L('تم جلب ' + fmtN(CH.length) + ' قناة ✓', fmtN(CH.length) + ' channels loaded ✓'), 'ok');
       go('packs');
       if (!cfg().opt.asked) onboard();
     } catch (e) {
@@ -748,7 +815,7 @@
     if (resetFocus) $('#main').scrollTop = 0;
     restoreFocus(resetFocus);
   }
-  function navOf(v) { return { pack: 'packs', group: 'browse' }[v] || v; }
+  function navOf(v) { return { pack: 'packs', group: 'browse', news: 'packs', newpk: 'packs' }[v] || v; }
   function restoreFocus(reset) {
     if (ui.modal) return;
     if (!IS_TV) { const a = document.activeElement; if (a && a.tagName === 'INPUT' && document.contains(a)) return; if (!lastFid) return; }
@@ -765,10 +832,11 @@
   }
   function topHtml() {
     const s = src();
-    const titles = { subs: 'الاشتراكات', packs: 'الباقات', pack: '', browse: 'تصفح قنوات المزود', group: '', export: 'إرسال إلى الرسيفر', settings: 'الإعدادات', favs: 'المفضلة', probe: 'نتيجة الفحص' };
+    const titles = { subs: 'الاشتراكات', packs: 'الباقات', pack: '', browse: 'تصفح قنوات المزود', group: '', export: 'إرسال إلى الرسيفر', settings: 'الإعدادات', favs: 'المفضلة', probe: 'نتيجة الفحص', news: L('🆕 الجديد في اشتراكك', '🆕 New in your subscription') };
     let t = titles[ui.view];
     if (ui.view === 'pack') { const pk = pkById(ui.pk); t = pk ? `<span class="pkdot" style="${cv(pk.col)}">${pk.ic}</span> <span class="nt">${esc(pkName(pk))}</span>` : ''; }
     if (ui.view === 'group') t = '<span class="nt">🗂️ ' + esc(ui.grp) + '</span>';
+    if (ui.view === 'newpk') { const pk = ui.newsPk === 'rest' ? null : pkById(ui.newsPk); t = '🆕 <span class="nt">' + (pk ? pk.ic + ' ' + esc(pkName(pk)) : '📥 ' + L('خارج الباقات', 'Not in a package')) + '</span>'; }
     let chips = '';
     if (s) chips += `<span class="chip nt"><i>📡</i>${esc(s.name)}</span>`;
     if (CH.length) chips += `<span class="chip"><i>📺</i>${fmtN(CH.length)} قناة</span>`;
@@ -892,7 +960,9 @@
         <div class="stat"><b>${fmtN(C.pk.filter(p => p.on).length)}</b><span>باقة مفعّلة</span></div>
         <div class="stat"><b>${fmtN(total)}</b><span>قناة في القائمة النهائية</span></div>
         <div class="stat"><b>${fmtN(CH.length)}</b><span>قناة عند المزود</span></div>
-        <button class="btn pri big f" data-act="go" data-arg="export" data-fid="go-export">🚀 إرسال إلى الرسيفر</button></div>
+        <div class="sumbtns"><button class="btn pri big f" data-act="go" data-arg="export" data-fid="go-export">🚀 إرسال إلى الرسيفر</button>
+        ${src() && src().type !== 'file' ? `<button class="btn f" data-act="refreshSub" data-fid="go-refresh">⟳ ${L('تحديث الاشتراك', 'Refresh subscription')}</button>` : ''}</div></div>
+      ${newsList().length ? `<button class="newsbar f auto" data-act="go" data-arg="news" data-fid="go-news"><span class="newtag">🆕 ${fmtN(newsList().length)}</span> ${L('قناة جديدة في اشتراكك — اعرضها ورتّبها', 'new channels in your subscription — review them')} ‹</button>` : ''}
       <div class="card opts">
         <div class="opt wide"><span>طريقة الترتيب</span><div class="seg">
           <button class="btn sm f ${o.mode !== 'provider' ? 'on' : ''}" data-act="setMode" data-arg="smart" data-fid="mode-smart">✨ ترتيب ذكي</button>
@@ -1000,6 +1070,59 @@
   };
 
   VIEWS.favs = function () { ui.pk = 'fav'; return VIEWS.pack(); };
+
+  VIEWS.news = function () {
+    if (!CH.length) return needSource();
+    const N = newsByPack();
+    if (!N.total) return `<div class="empty"><div class="big">✅</div><p>${L('ما فيه قنوات جديدة — كل قنواتك موجودة في الرسيفر', 'No new channels — everything is already on the receiver')}</p>
+      <button class="btn pri f auto" data-act="refreshSub" data-fid="nw-ref">⟳ ${L('تحديث الاشتراك', 'Refresh subscription')}</button></div>`;
+    const inFile = N.total - N.rest.length;
+    const tile = (id, ic, col, name, n, i) => `<div class="tile on" style="${cv(col)}"><button class="tile-main f ${i === 0 ? 'auto' : ''}" data-act="newsOpen" data-arg="${id}" data-fid="nw-${id}">
+        <span class="tile-ic">${ic}</span><span class="tile-nm nt">${esc(name)}</span><span class="tile-n"><span class="newtag">+${fmtN(n)}</span> <small>${L('جديدة', 'new')}</small></span></button></div>`;
+    const tiles = N.groups.map((g, i) => tile(g.pk.id, g.pk.ic, g.pk.col, pkName(g.pk), g.list.length, i)).join('')
+      + (N.rest.length ? tile('rest', '📥', '#64748b', L('خارج الباقات', 'Not in a package'), N.rest.length, N.groups.length) : '');
+    return `<div class="pkhead newshead" style="${cv('#10b981')}">
+        <div class="pkinfo"><span class="big-ic">🆕</span><div><b>${fmtN(N.total)}</b> ${L('قناة جديدة في اشتراكك', 'new channels in your subscription')}
+          <div class="mut small">${L('مقارنة بآخر إرسال للرسيفر', 'Compared with your last send')}${sinceTxt() ? ' · <span class="nt">' + sinceTxt() + '</span>' : ''} · ${L('افتح أي باقة لنقل قنواتها أو اتركها مكانها', 'open a package to move them or leave them')}</div></div></div>
+        <div class="bar">
+          <button class="btn pri f" data-act="newsSend" data-fid="nw-send" ${inFile ? '' : 'disabled'}>🚀 ${L('إرسال الجديد للرسيفر', 'Send new to receiver')} (${fmtN(inFile)})</button>
+          ${canPlayer() && inFile ? `<button class="btn f" data-act="newsPlay" data-fid="nw-play">▶ ${L('معاينة الجديد', 'Preview new')}</button>` : ''}
+          <button class="btn f" data-act="refreshSub" data-fid="nw-ref">⟳ ${L('تحديث', 'Refresh')}</button>
+          <button class="btn f" data-act="newsSkip" data-fid="nw-skip">${L('تجاهل', 'Dismiss')}</button>
+        </div></div>
+      ${N.rest.length ? `<div class="hint top">📥 ${L('القنوات "خارج الباقات" ما راح تنرسل إلا إذا نقلتها لباقة', 'Channels "not in a package" are sent only after you move them into one')}</div>` : ''}
+      <div class="tiles">${tiles}</div>`;
+  };
+
+  VIEWS.newpk = function () {
+    if (!CH.length) return needSource();
+    const N = newsByPack(), id = ui.newsPk;
+    const g = id === 'rest' ? { list: N.rest } : N.groups.find(x => x.pk.id === id);
+    const list = g ? g.list : [];
+    if (!list.length) return `<div class="empty"><div class="big">✅</div><p>${L('ما بقى شيء جديد هنا', 'Nothing new left here')}</p>
+      <button class="btn pri f auto" data-act="go" data-arg="news" data-fid="np-back">↩ ${L('رجوع للجديد', 'Back to new channels')}</button></div>`;
+    const start = ui.page * PAGE, page = list.slice(start, start + PAGE);
+    const fav = pkById('fav');
+    const rows = page.map((c, i) => {
+      const fid = 'np-' + c.i, isFav = inPk(fav, c);
+      return `<div class="row prow newrow"><span class="num">${start + i + 1}</span>
+        <button class="rowmain f ${i === 0 ? 'auto' : ''}" data-act="newsMove" data-arg="${c.i}" data-fid="${fid}">${logo(c)}<span class="nm nt"><b>${esc(dispName(c))}</b>${qualTag(c)}<small>${esc(c.g)}</small></span></button>
+        <button class="ib play f" data-act="pvPlay" data-arg="${c.i}" data-fid="${fid}-p">▶</button>
+        ${id !== 'fav' ? `<button class="ib star f ${isFav ? 'on' : ''}" data-act="newsFav" data-arg="${c.i}" data-fid="${fid}-f">★</button>` : ''}
+        <button class="btn sm mvb f" data-act="newsMove" data-arg="${c.i}" data-fid="${fid}-m">⇄<span> ${L('نقل', 'Move')}</span></button>
+        <button class="ib del f" data-act="newsDel" data-arg="${c.i}" data-fid="${fid}-x" title="${L('لا أريدها', 'Skip it')}">✕</button></div>`;
+    }).join('');
+    return `<div class="bar">
+        <button class="btn f" data-act="go" data-arg="news" data-fid="np-keep">✓ ${id === 'rest' ? L('رجوع', 'Back') : L('إبقاؤها في نفس الباقة', 'Keep them here')}</button>
+        <button class="btn f" data-act="newsMoveAll" data-fid="np-all">⇄ ${L('نقل الكل إلى…', 'Move all to…')}</button>
+      </div>
+      <div class="list">${rows}</div>${pager(list.length)}`;
+  };
+  function newsPicker(arg, title) {
+    const cur = ui.newsPk;
+    modal(`<h2 class="nt">${title}</h2><div class="pkpicks">${cfg().pk.map((p, i) => `<button class="pkpick f ${i === 0 ? 'auto' : ''} ${p.id === cur ? 'on' : ''}" style="${cv(p.col)}" data-act="newsTo" data-arg="${p.id}|${arg}"><span class="nt">${p.ic} ${esc(pkName(p))}</span>${p.on ? '' : ` <small class="mut">(${L('غير مفعّلة', 'off')})</small>`}</button>`).join('')}</div>
+      <div class="bar end"><button class="btn f" data-act="closeModal">${L('إلغاء', 'Cancel')}</button></div>`);
+  }
 
   VIEWS.browse = function () {
     if (!CH.length) return needSource();
@@ -1214,6 +1337,61 @@
     page: p => { ui.page = Math.max(0, +p); ui.move = null; render(true); },
     closeModal: () => closeModal(),
     playerAll: () => openPlayer(null, { preview: true }),
+    refreshSub: () => { const s = src(); if (!s) return go('subs'); closeModal(); loadSource(s, false); },
+    newsOpen: id => go('newpk', { newsPk: id }),
+    newsMove: i => { const c = chAt(i); newsPicker(c.i, L('نقل "' + esc(dispName(c)) + '" إلى', 'Move "' + esc(dispName(c)) + '" to')); },
+    newsMoveAll: () => newsPicker('all', L('نقل كل القنوات الجديدة هنا إلى', 'Move all new channels here to')),
+    newsTo: a => {
+      const [id, arg] = a.split('|'), tp = pkById(id); if (!tp) return;
+      const N = newsByPack(), g = ui.newsPk === 'rest' ? { list: N.rest } : N.groups.find(x => x.pk.id === ui.newsPk);
+      const list = arg === 'all' ? (g ? g.list.slice() : []) : [chAt(arg)];
+      closeModal();
+      if (id === ui.newsPk && arg !== 'all') return;
+      list.forEach(c => moveOnly(c, tp));
+      if (!tp.on) { tp.on = true; changed(); }
+      render(); toast(L('✓ نُقلت إلى ', '✓ Moved to ') + pkName(tp) + (list.length > 1 ? ' (' + fmtN(list.length) + ')' : ''), 'ok');
+    },
+    newsFav: i => { const c = chAt(i); toggleFav(c); render(); toast(inPk(pkById('fav'), c) ? L('⭐ أضيفت للمفضلة', '⭐ Added to favorites') : L('أزيلت من المفضلة', 'Removed from favorites')); },
+    newsDel: i => {
+      const c = chAt(i);
+      for (let g = 0; g < 5; g++) { let hit = false; for (const p of cfg().pk) if (inPk(p, c)) { removeFrom(p, c); hit = true; } if (!hit) break; }
+      cfg().news = (cfg().news || []).filter(k => k !== c.k); markSeen([c]); changed(); render();
+      toast(L('تم استبعاد ', 'Skipped ') + dispName(c));
+    },
+    newsSkip: () => modal(`<h2>${L('تجاهل القنوات الجديدة؟', 'Dismiss the new channels?')}</h2><p class="mut">${L('ما راح تظهر هنا مرة ثانية، وتبقى في باقاتها إذا أرسلت القائمة كاملة.', 'They will not show here again; they stay in their packages for a full send.')}</p>
+      <div class="bar end"><button class="btn f auto" data-act="closeModal">${L('إلغاء', 'Cancel')}</button><button class="btn danger f" data-act="newsSkipGo">${L('تجاهل', 'Dismiss')}</button></div>`),
+    newsSkipGo: () => { markSeen(); closeModal(); go('packs'); toast(L('✓ تم — المقارنة القادمة تبدأ من الآن', '✓ Done — the next check starts from now'), 'ok'); },
+    newsShow: () => { closeModal(); go('news'); },
+    newsPlay: () => { const N = newsByPack(); ui.playerCtx = 'news'; openPlayer(null, { preview: true, only: N.set }); },
+    newsSend: async () => {
+      const N = newsByPack(), part = buildM3U(N.set);
+      if (!part.count) return toast(L('انقل القنوات الجديدة لباقة مفعّلة أولاً', 'Move the new channels into an enabled package first'), 'bad');
+      if (ui.exporting) return;
+      ui.exporting = true;
+      toast(L('جاري إرسال الجديد…', 'Sending new channels…'));
+      const base = cfg().opt.fname || 'M3U_TV', nn = base + '_NEW';
+      const r = await postM3U(nn, part.text);
+      const ok = !!(r && (r.saved || []).length);
+      if (ok) await postM3U(base, buildM3U().text);     // keep the full list complete too
+      ui.exporting = false;
+      if (!ok) {
+        if (r && !INFO.storage) ACT.perm();
+        return modal(`<h2>⚠ ${L('ما وصل الجديد للرسيفر', 'The new channels did not reach the receiver')}</h2>
+          <p class="mut">${IN_APP ? L('امنح صلاحية التخزين ثم أعد المحاولة.', 'Allow storage access, then try again.') : L('تأكد إن تطبيق M3U مفتوح في الرسيفر وإن الجوال على نفس الشبكة.', 'Make sure M3U is open on the receiver and on the same network.')}</p>
+          <div class="bar end"><button class="btn f" data-act="closeModal">${L('إغلاق', 'Close')}</button><button class="btn pri f auto" data-act="newsSendRetry">🔄 ${L('إعادة', 'Retry')}</button></div>`);
+      }
+      const fn = esc(nn) + '.m3u', cnt = part.count;
+      markSeen(); ui.seenExport = (INFO.lastExport || {}).t;
+      go('packs');
+      toast(L('تم الإرسال ✓', 'Sent ✓'), 'ok');
+      modal(`<div class="onb"><h2>✅ ${L('وصل الجديد للرسيفر', 'New channels are on the receiver')}</h2>
+          <p class="mut"><b class="ltr">+${fmtN(cnt)}</b> ${L('قناة · في ملف', 'channels · in')} <b class="ltr nt">${fn}</b></p></div>
+          <div class="tigersteps"><b>${L('من ريموت الرسيفر:', 'With the receiver remote:')}</b>
+          <span>Menu</span>›<span>${L('التركيب', 'Installation')}</span>›<span>${L('بحث قنوات IP', 'IP channel search')}</span>›<span>${L('اختر ملف', 'Select file')}: <b class="ltr nt">Local(${fn})</b></span>›<span>${L('بدء البحث', 'Start search')}</span></div>
+          <p class="mut small">${L('تنضاف بعد قنواتك الحالية بدون ما تمسحها.', 'They are added after your current channels without removing them.')}</p>
+          <div class="bar end"><button class="btn pri f auto" data-act="closeModal">${L('تمام', 'OK')}</button></div>`);
+    },
+    newsSendRetry: () => { closeModal(); setTimeout(() => ACT.newsSend(), 50); },
     playerPk: id => { const l = members(id); if (!l.length) return toast(L('الباقة فاضية', 'Empty package'), 'bad'); openPlayer(l[Math.min(ui.page * PAGE, l.length - 1)]); },
     grpHide: i => {
       const g = GROUPS[+i]; if (!g) return; const C = cfg(), HG = C.hideG || (C.hideG = {});
@@ -1535,6 +1713,7 @@
       }
       ui.exportRes = { saved: r.saved || [], failed: r.failed || [], count: b.count };
       const ok = (r.saved || []).length > 0;
+      if (ok) markSeen();
       render();
       if (!ok && !INFO.storage) ACT.perm();
       if (!IN_APP) {

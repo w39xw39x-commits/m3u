@@ -428,3 +428,18 @@ button,input,select,textarea{font-family:inherit}
 .hidrow:focus{outline:none;border-color:#22d3ee;color:#fff;box-shadow:0 0 18px rgba(34,211,238,.35)}
 .sendbtns{display:flex;gap:10px;flex-wrap:wrap}
 @media (max-width:820px){.sendbtns{width:100%}.sendbtns .btn{flex:1 1 100%}}
+/* new channels after a subscription refresh */
+.sumbtns{display:flex;flex-direction:column;gap:8px}
+.sumbtns .btn.big{flex:1}
+.newsbar{display:flex;align-items:center;gap:12px;width:100%;margin:0 0 14px;padding:13px 18px;border-radius:var(--r);font-weight:800;font-size:clamp(14px,1.6vw,17px);text-align:start;color:inherit;background:linear-gradient(90deg,rgba(16,185,129,.2),rgba(34,211,238,.12));border:1.5px solid rgba(16,185,129,.6);cursor:pointer}
+.newsbar:focus,.newsbar:hover{outline:none;border-color:#34d399;box-shadow:0 0 0 3px rgba(52,211,153,.35)}
+.newtag{display:inline-block;direction:ltr;unicode-bidi:isolate;padding:3px 10px;border-radius:999px;background:#10b981;color:#fff;font-weight:900;font-size:.85em;font-family:Messiri,sans-serif}
+.tile-n .newtag{font-size:17px}
+.newshead .bar .btn[disabled]{opacity:.45}
+html.touch .summary{grid-template-columns:repeat(3,1fr)}
+html.touch .sumbtns{grid-column:1/-1;flex-direction:row}
+html.touch .sumbtns .btn{flex:1}
+[data-theme=light] .newsbar{color:#064e3b}
+html.touch .mvb span{display:none}
+html.touch .mvb{min-width:44px}
+html.touch .newrow .num,html.touch .newrow .star{display:none}
